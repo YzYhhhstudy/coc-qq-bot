@@ -110,6 +110,12 @@ STRATEGIES = [
     },
 ]
 
+# 公众号/中文社区精选文章（人工收录：看到好文把链接发给 Claude 加进来）
+# 格式: (标题, 链接, 适用大本下限, 适用大本上限)
+WECHAT_ARTICLES: list[tuple[str, str, int, int]] = [
+    # 暂无收录——微信文章无法自动搜索，靠人工投喂
+]
+
 # 阵型资源站（分级列表页，进去挑选后一键复制到游戏）
 def base_links(th: int, fun: bool) -> list[tuple[str, str]]:
     if fun:
@@ -124,10 +130,14 @@ def base_links(th: int, fun: bool) -> list[tuple[str, str]]:
          "https://blueprintcoc.com/blogs/coc-base-layouts/best-cwl-base-every-th"),
         (f"TH{th} 部落战阵型合集",
          f"https://clashofclans-layouts.com/plans/th_{th}/war/"),
+        ("黑羽COC 阵型分享站(中文)", "http://coc.6oh.cn/"),
+        (f"B站 {th}本阵型视频(链接在简介)",
+         f"https://search.bilibili.com/all?keyword=部落冲突{th}本阵型"),
     ]
     if th in (17, 18):
         links.append((f"ClashCodes TH{th} 防三星阵",
                       f"https://clashcodes.com/bases/th{th}" + ("-war" if th == 17 else "")))
+    links += [(f"📰 {t}", u) for t, u, lo, hi in WECHAT_ARTICLES if lo <= th <= hi]
     return links
 
 
