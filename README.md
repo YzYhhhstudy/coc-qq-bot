@@ -1,5 +1,8 @@
 # coc-qq-bot — 部落冲突 QQ 群助手（官方平台 · 被动回复版）
 
+> A QQ bot for Clash of Clans clans, built on the official QQ Bot Open Platform (WebSocket) and the official CoC API.
+> Features: clan/war/CWL queries, war-day nudges, medal calculator, win-probability estimate, player growth tracking, and monthly-curated meta (strategies & base layouts). MIT licensed.
+
 QQ 群机器人：群里 `@机器人 <指令>`，查询绑定部落的公开信息（成员、部落战敌我情况等）。
 数据来自 **Supercell 官方 Clash of Clans API**（免费），消息通道走 **QQ 开放平台官方接口**（合规、不封号）。
 不做主动播报，纯被动问答 —— 不需要 LLM，**零 AI 费用**。
