@@ -173,6 +173,8 @@ scripts\run_windows.bat
 开机自启：任务计划程序 → 创建基本任务 → 触发器"登录时" → 操作"启动程序"选 `scripts\run_windows.bat`。
 （设置里记得关掉系统自动睡眠。）
 
+**日常更新**：双击 `scripts\update.bat` 一键完成 拉代码 → 装依赖 → 重启机器人（机器人运行中也可直接双击；只精准杀 bot 进程，不影响其他 Python 程序）。
+
 ### Linux / VPS
 
 ```bash
