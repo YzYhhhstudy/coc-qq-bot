@@ -113,10 +113,19 @@ QQ 群消息 (@bot xxx)
 .venv/bin/python scripts/local_smoke.py   # 不碰 QQ 群，测指令逻辑 + 验签
 ```
 
-## Meta 数据维护（流派/阵型）
+## Meta 数据维护（流派/阵型）—— 每月一次
 
-`app/meta.py` 是人工维护的版本数据（流派、配兵链接、阵型站），带 `META_UPDATED` 日期。
-Supercell 每月平衡性调整后 meta 会变，**建议每月联赛前更新一次**：让 Claude 重新调研当月 meta 并改这个文件即可，其余代码不用动。
+`app/meta.py` 是人工维护的版本数据（流派、配兵链接、阵型站），带 `META_UPDATED` 日期，会显示在机器人输出里。
+
+**更新流程（每月联赛前，或 Supercell 发平衡性补丁后）：**
+
+1. 打开 Claude Code，对 **Claude** 说：「更新 meta」——注意是和 Claude 对话，不是和 QQ 机器人对话，机器人只负责读这份数据
+2. Claude 会重新调研当月各大本流行流派/配兵链接/阵型资源，更新 `app/meta.py` 和 `META_UPDATED` 日期，然后 commit + push
+3. 部署机器上 `git pull` 并重启机器人即生效
+
+> 给 Claude 的提示：更新时调研 Blueprint CoC（有游戏内一键复制的 CopyArmy 链接）、TapTap/bilibili 中文流派统计；
+> 覆盖 TH13-18 的主流流派（名称/别名/思路/英雄装备/关键兵种法术的 API 英文名/配兵链接），
+> 核对阵型站分级页 URL 是否仍有效；超级兵在 troops 检查里登记为原兵种名。
 
 ## 迁移 / 常驻部署
 
