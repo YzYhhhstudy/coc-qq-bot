@@ -63,7 +63,7 @@ HELP = (
     "【部落】绑定 #TAG｜解绑｜部落 [#TAG]｜成员 [#TAG]｜捐兵｜摸鱼榜｜突袭｜突袭-催刀｜搜索 名字\n"
     "【部落战】部落战(=战况)｜部落战-对阵｜部落战-进度｜部落战-催刀｜部落战-敌刀｜部落战-复盘｜部落战-战绩\n"
     "【联赛】联赛｜联赛-积分榜｜联赛-奖章｜联赛-对阵｜联赛-2(第2场)｜联赛-进度 [场次]｜联赛-催刀｜联赛-敌刀｜联赛-复盘 [场次]｜联赛-总结\n"
-    "【玩法】玩法-流派推荐-17(大本数)｜玩法-防御阵型推荐-17｜玩法-个性化阵型推荐-17｜"
+    "【玩法】玩法-流派-17(大本数)｜玩法-阵型-17｜玩法-个性阵-17｜"
     "玩法-阵型收录/流派收录 链接 [备注]｜玩法-收录列表\n"
     "【玩家】玩家 #TAG｜玩家-英雄/部队/法术/建议 #TAG\n"
     "【我】绑定玩家 #TAG｜解绑玩家｜我｜我-英雄/部队/法术/建议/成长｜我-流派名(如 我-隐龙龙骑)\n"
@@ -139,7 +139,7 @@ async def handle(group_openid: str, content: str) -> str:
                 return _fmt_meta_strategies(th)
             if kind in ("防御阵型推荐", "防御阵型", "阵型"):
                 return _fmt_base_links(th, fun=False)
-            if kind in ("个性化阵型推荐", "个性阵型", "艺术阵型"):
+            if kind in ("个性阵", "个性化阵型推荐", "个性阵型", "艺术阵型"):
                 return _fmt_base_links(th, fun=True)
             if kind in ("阵型收录", "流派收录"):
                 if not args or not args[0].startswith("http"):
@@ -152,7 +152,7 @@ async def handle(group_openid: str, content: str) -> str:
                 if not store.add_shared_link(k, url, note,
                                              int(th_m.group(1)) if th_m else None, who):
                     return "这个链接已经收录过了"
-                where = "玩法-防御阵型推荐" if k == "base" else "玩法-流派推荐"
+                where = "玩法-阵型" if k == "base" else "玩法-流派"
                 return (f"✅ 已收录（分享人：{who}）！所有人查「{where}」都能看到\n"
                         "⚠️ 提醒：确认文中阵型链接是国际服的（link.clashofclans.com），"
                         "国服链接大家点不开\n管理：玩法-收录列表 / 玩法-收录删除 编号")
@@ -162,8 +162,8 @@ async def handle(group_openid: str, content: str) -> str:
                 if not args or not args[0].isdigit():
                     return "用法：玩法-收录删除 编号（编号看：玩法-收录列表）"
                 return "✅ 已删除" if store.delete_shared_link(int(args[0])) else "没有这个编号"
-            return ("玩法子功能：玩法-流派推荐-17 / 玩法-防御阵型推荐-17 / "
-                    "玩法-个性化阵型推荐-17 / 玩法-阵型收录 链接 / 玩法-流派收录 链接 / "
+            return ("玩法子功能：玩法-流派-17 / 玩法-阵型-17 / 玩法-个性阵-17 / "
+                    "玩法-阵型收录 链接 / 玩法-流派收录 链接 / "
                     "玩法-收录列表（数字=大本等级，绑定玩家后可省略）")
 
         # ---- 部落类（可带 #TAG 查任意部落，否则用绑定的） ----
@@ -650,7 +650,7 @@ def _fmt_player_sub(p: dict, sub: str) -> str:
         strat = meta.find_strategy(sub)
         if strat:
             return _fmt_strategy_advice(p, strat)
-        return f"没有「{sub}」这个子功能或流派。看流派列表：玩法-流派推荐-{p.get('townHallLevel', 17)}"
+        return f"没有「{sub}」这个子功能或流派。看流派列表：玩法-流派-{p.get('townHallLevel', 17)}"
     return _fmt_player(p)
 
 
@@ -1081,7 +1081,7 @@ def _fmt_shared_list() -> str:
 
 def _fmt_meta_strategies(th: int | None) -> str:
     if not th:
-        return "带上大本等级，如：玩法-流派推荐-17（绑定玩家后可省略数字）"
+        return "带上大本等级，如：玩法-流派-17（绑定玩家后可省略数字）"
     strats = meta.strategies_for_th(th)
     lines = [f"🎯 {th}本流行流派（更新 {meta.META_UPDATED}）"]
     if not strats:
@@ -1098,7 +1098,7 @@ def _fmt_meta_strategies(th: int | None) -> str:
 
 def _fmt_base_links(th: int | None, fun: bool) -> str:
     if not th:
-        return "带上大本等级，如：玩法-防御阵型推荐-17"
+        return "带上大本等级，如：玩法-阵型-17"
     if not 9 <= th <= 18:
         return "支持 9~18 本"
     kind = "个性化/艺术阵型" if fun else "防御阵型"
