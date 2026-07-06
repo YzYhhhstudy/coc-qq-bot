@@ -1,0 +1,19 @@
+# systemd 服务（HP 若装 Linux 用这个）
+# 用法：
+#   sudo cp deploy/coc-qq-bot.service /etc/systemd/system/
+#   把下面两处 /home/YOU/coc-qq-bot 改成实际路径
+#   sudo systemctl enable --now coc-qq-bot
+# 看日志：journalctl -u coc-qq-bot -f
+[Unit]
+Description=CoC QQ Bot (WebSocket mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/home/YOU/coc-qq-bot
+ExecStart=/home/YOU/coc-qq-bot/.venv/bin/python -m app.ws_main
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
