@@ -111,6 +111,8 @@ STRATEGIES = [
 ]
 
 # 公众号/中文社区精选文章（人工收录：看到好文把链接发给 Claude 加进来）
+# ⚠️ 收录前确认文中阵型链接是国际服的（link.clashofclans.com 域名）；
+#    国服链接（腾讯深链）在国际服客户端点不开，反之亦然
 # 格式: (标题, 链接, 适用大本下限, 适用大本上限)
 WECHAT_ARTICLES: list[tuple[str, str, int, int]] = [
     # 暂无收录——微信文章无法自动搜索，靠人工投喂
@@ -130,8 +132,9 @@ def base_links(th: int, fun: bool) -> list[tuple[str, str]]:
          "https://blueprintcoc.com/blogs/coc-base-layouts/best-cwl-base-every-th"),
         (f"TH{th} 部落战阵型合集",
          f"https://clashofclans-layouts.com/plans/th_{th}/war/"),
-        ("黑羽COC 阵型分享站(中文)", "http://coc.6oh.cn/"),
-        (f"B站 {th}本阵型视频(链接在简介)",
+        # 黑羽站国服/国际服阵型都有，链接协议不通用，进站后记得把区服筛选切到「国际服」
+        ("黑羽COC 阵型分享站(中文,进站选国际服)", "http://coc.6oh.cn/"),
+        (f"B站 {th}本阵型视频(链接在简介,认准国际服)",
          f"https://search.bilibili.com/all?keyword=部落冲突{th}本阵型"),
     ]
     if th in (17, 18):
