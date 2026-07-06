@@ -1,13 +1,12 @@
 @echo off
-REM Windows 启动脚本：双击运行，或配合任务计划程序开机自启
-REM 断线/崩溃后 10 秒自动重启
+REM CoC QQ Bot launcher (auto-restart on crash). Keep this window open.
 cd /d %~dp0..
 if not exist .env (
-    echo [错误] 找不到 .env 文件！把 Mac 上的 .env 和 bindings.db 拷到本目录再运行
+    echo [ERROR] .env not found! Copy .env and bindings.db from the old machine into this folder, then run again.
     pause
     exit /b 1
 )
-echo 机器人启动中... 日志见 bot.log（此窗口保持开着，关掉=机器人下线）
+echo Bot starting... logs in bot.log ^(closing this window stops the bot^)
 :loop
 .venv\Scripts\python.exe -m app.ws_main >> bot.log 2>&1
 echo [%date% %time%] bot exited, restarting in 10s... >> bot.log
