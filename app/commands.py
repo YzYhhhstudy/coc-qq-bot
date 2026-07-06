@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from . import coc, store
+from . import coc, meta, store
 
 # ---------------- 数据表 ----------------
 
@@ -62,8 +62,9 @@ HELP = (
     "【部落】绑定 #TAG｜解绑｜部落 [#TAG]｜成员 [#TAG]｜捐兵｜摸鱼榜｜突袭｜突袭-催刀｜搜索 名字\n"
     "【部落战】部落战(=战况)｜部落战-对阵｜部落战-催刀｜部落战-敌刀｜部落战-复盘｜部落战-战绩\n"
     "【联赛】联赛｜联赛-积分榜｜联赛-奖章｜联赛-对阵｜联赛-2(第2场)｜联赛-催刀｜联赛-敌刀｜联赛-复盘 [场次]｜联赛-总结\n"
+    "【玩法】玩法-流派推荐-17(大本数)｜玩法-防御阵型推荐-17｜玩法-个性化阵型推荐-17\n"
     "【玩家】玩家 #TAG｜玩家-英雄/部队/法术/建议 #TAG\n"
-    "【我】绑定玩家 #TAG｜解绑玩家｜我｜我-英雄/部队/法术/建议/成长\n"
+    "【我】绑定玩家 #TAG｜解绑玩家｜我｜我-英雄/部队/法术/建议/成长｜我-流派名(如 我-隐龙龙骑)\n"
     "带 [#TAG] 的指令可以查任意部落，不带就查已绑定的\n"
     "换绑：直接重新「绑定」即可覆盖"
 )
@@ -101,7 +102,7 @@ async def handle(group_openid: str, content: str) -> str:
         # ---- 玩家 ----
         if main == "玩家":
             if not args:
-                return "用法：玩家 #玩家TAG（子功能：玩家-英雄/部队/法术 #TAG）"
+                return "用法：玩家 #玩家TAG（子功能：玩家-英雄/部队/法术/建议/流派名 #TAG）"
             return _fmt_player_sub(await coc.get_player(args[0]), sub)
         if main == "我":
             ptag = store.get_player_tag(group_openid)
@@ -118,6 +119,28 @@ async def handle(group_openid: str, content: str) -> str:
             if not args:
                 return "用法：搜索 部落名"
             return _fmt_search(await coc.search_clans(" ".join(args)))
+
+        # ---- 玩法（流派/阵型推荐，人工维护的 meta 数据） ----
+        if main == "玩法":
+            sub_parts = [s for s in sub.split("-") if s]
+            kind = sub_parts[0] if sub_parts else ""
+            th = None
+            if len(sub_parts) > 1 and sub_parts[1].isdigit():
+                th = int(sub_parts[1])
+            elif args and args[0].isdigit():
+                th = int(args[0])
+            if th is None:  # 没给大本就用绑定玩家的
+                ptag = store.get_player_tag(group_openid)
+                if ptag:
+                    th = (await coc.get_player(ptag)).get("townHallLevel")
+            if kind in ("流派推荐", "流派"):
+                return _fmt_meta_strategies(th)
+            if kind in ("防御阵型推荐", "防御阵型", "阵型"):
+                return _fmt_base_links(th, fun=False)
+            if kind in ("个性化阵型推荐", "个性阵型", "艺术阵型"):
+                return _fmt_base_links(th, fun=True)
+            return ("玩法子功能：玩法-流派推荐-17 / 玩法-防御阵型推荐-17 / "
+                    "玩法-个性化阵型推荐-17（数字=大本等级，绑定玩家后可省略）")
 
         # ---- 部落类（可带 #TAG 查任意部落，否则用绑定的） ----
         # 纯数字参数（如 对阵 2）不是 TAG
@@ -542,6 +565,11 @@ def _fmt_player_sub(p: dict, sub: str) -> str:
         return _fmt_spells(p)
     if sub == "建议":
         return _fmt_advice(p)
+    if sub:  # 试着当流派名解析：我-隐龙龙骑
+        strat = meta.find_strategy(sub)
+        if strat:
+            return _fmt_strategy_advice(p, strat)
+        return f"没有「{sub}」这个子功能或流派。看流派列表：玩法-流派推荐-{p.get('townHallLevel', 17)}"
     return _fmt_player(p)
 
 
@@ -930,6 +958,72 @@ def _fmt_advice(p: dict) -> str:
         lines.append("英雄/主力兵/法术全满了，剩下的进游戏清墙和杂兵吧 💪")
     lines.append("💡 " + next(tip for cap, tip in TH_TIPS if th <= cap))
     lines.append("(经验法则排序，具体以你的流派为准；建筑/工人数据 API 不提供)")
+    return "\n".join(lines)
+
+
+# ---------------- 玩法（流派/阵型 meta） ----------------
+
+def _fmt_meta_strategies(th: int | None) -> str:
+    if not th:
+        return "带上大本等级，如：玩法-流派推荐-17（绑定玩家后可省略数字）"
+    strats = meta.strategies_for_th(th)
+    if not strats:
+        return f"{th}本暂无收录流派，试试相邻大本，或等下次 meta 更新"
+    lines = [f"🎯 {th}本流行流派（更新 {meta.META_UPDATED}）"]
+    for s in strats:
+        link = "📎有配兵链接" if s.get("army") else ""
+        lines.append(f"· {s['key']}（{'/'.join(s['aliases'][:2])}）{link}\n  {s['desc']}")
+    lines.append(f"查详情+个人等级检查：我-流派名（如 我-{strats[0]['key']}）")
+    return "\n".join(lines)
+
+
+def _fmt_base_links(th: int | None, fun: bool) -> str:
+    if not th:
+        return "带上大本等级，如：玩法-防御阵型推荐-17"
+    if not 9 <= th <= 18:
+        return "支持 9~18 本"
+    kind = "个性化/艺术阵型" if fun else "防御阵型"
+    lines = [f"🏗️ {th}本 {kind}（更新 {meta.META_UPDATED}）"]
+    for label, url in meta.base_links(th, fun):
+        lines.append(f"· {label}\n  {url}")
+    lines.append("进页面挑好点「Copy Base」即可导入游戏"
+                 + ("；皮卡丘/爱心/文字阵都在里面按名字挑" if fun else ""))
+    return "\n".join(lines)
+
+
+def _fmt_strategy_advice(p: dict, s: dict) -> str:
+    th = p.get("townHallLevel", 0)
+    lo, hi = s["th"]
+    lines = [f"🎯 {s['key']} | 适用 {lo}-{hi}本 | 数据更新 {meta.META_UPDATED}",
+             f"思路：{s['desc']}",
+             f"英雄/装备：{s['heroes']}"]
+    if not lo <= th <= hi:
+        lines.append(f"⚠️ 你是{th}本，该流派主打{lo}-{hi}本，可看：玩法-流派推荐-{th}")
+
+    troops = {t["name"]: t for t in p.get("troops", []) if t.get("village") == "home"}
+    spells = {t["name"]: t for t in p.get("spells", []) if t.get("village") == "home"}
+
+    def check(names, pool):
+        out = []
+        for n in names:
+            u = pool.get(n)
+            if not u:
+                out.append(f"{TROOP_CN.get(n, SPELL_CN.get(n, n))} 未解锁❗")
+            elif u["level"] < u.get("maxLevel", 0):
+                out.append(f"{TROOP_CN.get(n, SPELL_CN.get(n, n))}"
+                           f"{u['level']}/{u['maxLevel']}⚠️")
+            else:
+                out.append(f"{TROOP_CN.get(n, SPELL_CN.get(n, n))}{u['level']}✅")
+        return out
+
+    lines.append("关键兵种：" + "、".join(check(s["troops"], troops)) +
+                 "（超级兵按原兵种等级）")
+    lines.append("关键法术：" + "、".join(check(s["spells"], spells)))
+    lines.append("无援军自给：优先升满常用攻城机器（滚木机/战争飞艇/钻地机）")
+    if s.get("army"):
+        lines.append(f"一键复制配兵：{s['army']}")
+    else:
+        lines.append("配兵：常青流派，进游戏军队页或 blueprintcoc.com 搜同名")
     return "\n".join(lines)
 
 
