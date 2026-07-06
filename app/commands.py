@@ -5,6 +5,7 @@
 """
 import asyncio
 import math
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -62,7 +63,8 @@ HELP = (
     "【部落】绑定 #TAG｜解绑｜部落 [#TAG]｜成员 [#TAG]｜捐兵｜摸鱼榜｜突袭｜突袭-催刀｜搜索 名字\n"
     "【部落战】部落战(=战况)｜部落战-对阵｜部落战-进度｜部落战-催刀｜部落战-敌刀｜部落战-复盘｜部落战-战绩\n"
     "【联赛】联赛｜联赛-积分榜｜联赛-奖章｜联赛-对阵｜联赛-2(第2场)｜联赛-进度 [场次]｜联赛-催刀｜联赛-敌刀｜联赛-复盘 [场次]｜联赛-总结\n"
-    "【玩法】玩法-流派推荐-17(大本数)｜玩法-防御阵型推荐-17｜玩法-个性化阵型推荐-17\n"
+    "【玩法】玩法-流派推荐-17(大本数)｜玩法-防御阵型推荐-17｜玩法-个性化阵型推荐-17｜"
+    "玩法-阵型收录/流派收录 链接 [备注]｜玩法-收录列表\n"
     "【玩家】玩家 #TAG｜玩家-英雄/部队/法术/建议 #TAG\n"
     "【我】绑定玩家 #TAG｜解绑玩家｜我｜我-英雄/部队/法术/建议/成长｜我-流派名(如 我-隐龙龙骑)\n"
     "带 [#TAG] 的指令可以查任意部落，不带就查已绑定的\n"
@@ -139,8 +141,30 @@ async def handle(group_openid: str, content: str) -> str:
                 return _fmt_base_links(th, fun=False)
             if kind in ("个性化阵型推荐", "个性阵型", "艺术阵型"):
                 return _fmt_base_links(th, fun=True)
+            if kind in ("阵型收录", "流派收录"):
+                if not args or not args[0].startswith("http"):
+                    return (f"用法：玩法-{kind} 链接 [备注]\n"
+                            "备注里写明大本（如 17本）就只推给对应大本；不写则所有人可见")
+                url, note = args[0], " ".join(args[1:])[:80]
+                th_m = re.search(r"(\d{1,2})\s*本", note)
+                k = "base" if kind == "阵型收录" else "strategy"
+                who = await _submitter_name(group_openid)
+                if not store.add_shared_link(k, url, note,
+                                             int(th_m.group(1)) if th_m else None, who):
+                    return "这个链接已经收录过了"
+                where = "玩法-防御阵型推荐" if k == "base" else "玩法-流派推荐"
+                return (f"✅ 已收录（分享人：{who}）！所有人查「{where}」都能看到\n"
+                        "⚠️ 提醒：确认文中阵型链接是国际服的（link.clashofclans.com），"
+                        "国服链接大家点不开\n管理：玩法-收录列表 / 玩法-收录删除 编号")
+            if kind == "收录列表":
+                return _fmt_shared_list()
+            if kind == "收录删除":
+                if not args or not args[0].isdigit():
+                    return "用法：玩法-收录删除 编号（编号看：玩法-收录列表）"
+                return "✅ 已删除" if store.delete_shared_link(int(args[0])) else "没有这个编号"
             return ("玩法子功能：玩法-流派推荐-17 / 玩法-防御阵型推荐-17 / "
-                    "玩法-个性化阵型推荐-17（数字=大本等级，绑定玩家后可省略）")
+                    "玩法-个性化阵型推荐-17 / 玩法-阵型收录 链接 / 玩法-流派收录 链接 / "
+                    "玩法-收录列表（数字=大本等级，绑定玩家后可省略）")
 
         # ---- 部落类（可带 #TAG 查任意部落，否则用绑定的） ----
         # 纯数字参数（如 对阵 2）不是 TAG
@@ -1020,17 +1044,55 @@ def _fmt_advice(p: dict) -> str:
 
 # ---------------- 玩法（流派/阵型 meta） ----------------
 
+async def _submitter_name(owner_key: str) -> str:
+    """分享人署名：绑定过玩家就用游戏名，否则匿名。"""
+    ptag = store.get_player_tag(owner_key)
+    if ptag:
+        try:
+            return (await coc.get_player(ptag))["name"]
+        except Exception:
+            pass
+    return "匿名"
+
+
+def _shared_section(kind: str, th: int | None) -> list[str]:
+    rows = store.list_shared_links(kind, th)
+    if not rows:
+        return []
+    lines = ["—— 👥 群友分享 ——"]
+    for _id, url, note, th_v, who, day in rows[:8]:
+        label = note or ("阵型文章" if kind == "base" else "流派文章")
+        th_tag = f"[{th_v}本] " if th_v else ""
+        lines.append(f"· {th_tag}{label}（{who} {day}）\n  {url}")
+    return lines
+
+
+def _fmt_shared_list() -> str:
+    rows = store.all_shared_links()
+    if not rows:
+        return "还没有任何收录。分享：玩法-阵型收录 链接 [备注] / 玩法-流派收录 链接 [备注]"
+    lines = ["📚 收录列表（删除：玩法-收录删除 编号）"]
+    for _id, kind, url, note, th_v, who, day in rows:
+        k = "阵型" if kind == "base" else "流派"
+        th_tag = f"{th_v}本" if th_v else "通用"
+        lines.append(f"[{_id}] {k}·{th_tag} {note or '(无备注)'} — {who} {day}\n  {url}")
+    return "\n".join(lines)
+
+
 def _fmt_meta_strategies(th: int | None) -> str:
     if not th:
         return "带上大本等级，如：玩法-流派推荐-17（绑定玩家后可省略数字）"
     strats = meta.strategies_for_th(th)
-    if not strats:
-        return f"{th}本暂无收录流派，试试相邻大本，或等下次 meta 更新"
     lines = [f"🎯 {th}本流行流派（更新 {meta.META_UPDATED}）"]
+    if not strats:
+        lines.append("该大本暂无收录流派，试试相邻大本，或等下次 meta 更新")
     for s in strats:
         link = "📎有配兵链接" if s.get("army") else ""
         lines.append(f"· {s['key']}（{'/'.join(s['aliases'][:2])}）{link}\n  {s['desc']}")
-    lines.append(f"查详情+个人等级检查：我-流派名（如 我-{strats[0]['key']}）")
+    lines += _shared_section("strategy", th)
+    if strats:
+        lines.append(f"查详情+个人等级检查：我-流派名（如 我-{strats[0]['key']}）")
+    lines.append("看到好的流派文/视频？玩法-流派收录 链接 [备注]")
     return "\n".join(lines)
 
 
@@ -1043,8 +1105,11 @@ def _fmt_base_links(th: int | None, fun: bool) -> str:
     lines = [f"🏗️ {th}本 {kind}（更新 {meta.META_UPDATED}）"]
     for label, url in meta.base_links(th, fun):
         lines.append(f"· {label}\n  {url}")
+    if not fun:
+        lines += _shared_section("base", th)
     lines.append("进页面挑好点「Copy Base」即可导入游戏"
-                 + ("；皮卡丘/爱心/文字阵都在里面按名字挑" if fun else ""))
+                 + ("；皮卡丘/爱心/文字阵都在里面按名字挑" if fun
+                    else "；分享好文：玩法-阵型收录 链接 [备注]"))
     return "\n".join(lines)
 
 

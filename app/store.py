@@ -26,6 +26,16 @@ def _conn() -> sqlite3.Connection:
         " data TEXT NOT NULL,"
         " PRIMARY KEY (player_tag, day))"
     )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS shared_links ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " kind TEXT NOT NULL,"       # base=阵型 / strategy=流派
+        " url TEXT NOT NULL UNIQUE,"
+        " note TEXT NOT NULL DEFAULT '',"
+        " th INTEGER,"               # 备注里带"17本"则记下，用于按大本过滤
+        " submitter TEXT NOT NULL DEFAULT '匿名',"
+        " day TEXT NOT NULL)"
+    )
     return conn
 
 
@@ -90,6 +100,46 @@ def save_snapshot(player_tag: str, data: dict) -> None:
             " ON CONFLICT(player_tag, day) DO UPDATE SET data = excluded.data",
             (player_tag, day, json.dumps(data)),
         )
+
+
+def add_shared_link(kind: str, url: str, note: str, th: int | None, submitter: str) -> bool:
+    """收录一条群友分享的链接；重复 URL 返回 False。"""
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        with _conn() as conn:
+            conn.execute(
+                "INSERT INTO shared_links (kind, url, note, th, submitter, day)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (kind, url, note, th, submitter, day),
+            )
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def list_shared_links(kind: str, th: int | None = None) -> list[tuple]:
+    """按种类（可选按大本）取分享，新的在前。th 为 None 的收录对所有大本可见。"""
+    q = "SELECT id, url, note, th, submitter, day FROM shared_links WHERE kind = ?"
+    params: list = [kind]
+    if th is not None:
+        q += " AND (th IS NULL OR th = ?)"
+        params.append(th)
+    q += " ORDER BY id DESC LIMIT 10"
+    with _conn() as conn:
+        return conn.execute(q, params).fetchall()
+
+
+def all_shared_links() -> list[tuple]:
+    with _conn() as conn:
+        return conn.execute(
+            "SELECT id, kind, url, note, th, submitter, day FROM shared_links"
+            " ORDER BY id DESC LIMIT 30").fetchall()
+
+
+def delete_shared_link(link_id: int) -> bool:
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM shared_links WHERE id = ?", (link_id,))
+    return cur.rowcount > 0
 
 
 def get_snapshots(player_tag: str, limit_days: int = 30) -> list[tuple[str, dict]]:
