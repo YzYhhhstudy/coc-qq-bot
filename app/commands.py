@@ -55,6 +55,10 @@ SIEGE = {"Wall Wrecker", "Battle Blimp", "Stone Slammer", "Siege Barracks",
          "Log Launcher", "Flame Flinger", "Battle Drill", "Troop Launcher"}
 SUPER_TROOPS = {"Sneaky Goblin", "Rocket Balloon", "Inferno Dragon", "Ice Hound"}
 ROLE_CN = {"leader": "首领", "coLeader": "副首领", "admin": "长老", "member": "成员"}
+
+# 各大本英雄满级总和（蛮王+女皇+亡灵王子+大守护+皇战），随版本更新人工校对 wiki
+TH_HERO_MAX = {7: 10, 8: 30, 9: 70, 10: 100, 11: 150, 12: 210, 13: 275,
+               14: 320, 15: 355, 16: 385, 17: 415, 18: 440}
 WAR_STATE = {"preparation": "备战日", "inWar": "战斗日", "warEnded": "已结束",
              "notInWar": "当前没有部落战"}
 
@@ -201,6 +205,8 @@ async def handle(group_openid: str, content: str) -> str:
                     return _fmt_war_idle(war, enemy=True)
                 if sub == "复盘":
                     return _fmt_war_review(war)
+                if sub == "侦查":
+                    return await _fmt_scout(war)
                 return _fmt_war(war)
             if main == "突袭":
                 if sub == "催刀":
@@ -210,6 +216,9 @@ async def handle(group_openid: str, content: str) -> str:
                 return _fmt_donations(await coc.get_clan(tag))
             if main in ("摸鱼榜", "摸鱼", "活跃"):
                 return await _fmt_slackers(tag)
+            if main == "联赛" and sub == "阵容":  # 非联赛周也能用，须在 leaguegroup 之前
+                size = 30 if args and args[0] == "30" else 15
+                return await _fmt_cwl_roster(tag, size)
 
             # 联赛族（含旧别名）
             try:
@@ -227,6 +236,12 @@ async def handle(group_openid: str, content: str) -> str:
                 return await _fmt_cwl_matchup(tag, group, round_no)
             if sub.isdigit():
                 return await _fmt_cwl_matchup(tag, group, int(sub))
+            if sub == "侦查":
+                round_no = int(args[0]) if args and args[0].isdigit() else None
+                rn, war, err = await _find_cwl_war(tag, group, round_no)
+                if err:
+                    return err
+                return await _fmt_scout(war, round_label=f"第{rn}场")
             if sub == "催刀":
                 return await _fmt_idle(tag, group, enemy=False)
             if sub in ("敌刀", "敌方"):
@@ -285,6 +300,11 @@ def _time_left(war: dict) -> str:
 
 def _chunk(items: list[str], n: int = 4) -> list[str]:
     return ["  ".join(items[i:i + n]) for i in range(0, len(items), n)]
+
+
+def _hero_sum(p: dict) -> int:
+    return sum(h.get("level", 0) for h in p.get("heroes", [])
+               if h.get("village") == "home")
 
 
 # ---------------- 部落 ----------------
@@ -952,6 +972,88 @@ def _fmt_raid_idle(res: dict) -> str:
     if not pending:
         return "参与成员全部打满 ✅（未参与的成员 API 看不到）"
     return "\n".join([f"⚡ 突袭没打满的（{len(pending)}人）"] + pending)
+
+
+# ---------------- 敌情侦查 / 阵容建议 ----------------
+
+async def _fmt_scout(war: dict, round_label: str = "") -> str:
+    """对面全员英雄摸底：批量拉档案，标出软柿子。"""
+    them = war["opponent"]
+    theirs = sorted(them.get("members", []), key=lambda m: m.get("mapPosition", 99))
+    if not theirs:
+        return "对面名单还没生成，稍后再查"
+    ours = sorted(war["clan"].get("members", []), key=lambda m: m.get("mapPosition", 99))
+    profiles = await coc.get_players([m["tag"] for m in theirs], ttl=600)
+    our_profiles = await coc.get_players([m["tag"] for m in ours], ttl=600)
+
+    rows = []  # (序号, 名字, 本, 英雄总级|None, 满级占比|None)
+    for i, m in enumerate(theirs, 1):
+        th = m.get("townhallLevel", 0)
+        p = profiles.get(m["tag"])
+        hs = _hero_sum(p) if p else None
+        mx = TH_HERO_MAX.get(th)
+        pct = hs / mx if (hs is not None and mx) else None
+        rows.append((i, m["name"], th, hs, pct))
+
+    lines = [f"🔭 敌情侦查 vs {them['name']}" + (f" | {round_label}" if round_label else "")]
+    for i, name, th, hs, pct in rows:
+        if hs is None:
+            lines.append(f"{i}. {name} {th}本 英雄?")
+        elif pct is None:
+            lines.append(f"{i}. {name} {th}本 英雄{hs}")
+        else:
+            mark = "⚠️" if pct < 0.7 else ""
+            lines.append(f"{i}. {name} {th}本 英雄{hs}/{TH_HERO_MAX[th]}({pct:.0%}){mark}")
+
+    soft = sorted((r for r in rows if r[3] is not None),
+                  key=lambda r: (r[2], r[3]))[:4]
+    if soft:
+        lines.append("—— 软柿子（本低/英雄低）——")
+        lines += _chunk([f"{i}号{name}" for i, name, _th, _hs, _p in soft], 4)
+
+    def _avgs(members, profs):
+        ths = [m.get("townhallLevel", 0) for m in members]
+        sums = [_hero_sum(p) for p in (profs.get(m["tag"]) for m in members) if p]
+        return (sum(ths) / len(ths) if ths else 0,
+                sum(sums) / len(sums) if sums else 0)
+
+    th_us, hs_us = _avgs(ours, our_profiles)
+    th_th, hs_th = _avgs(theirs, profiles)
+    lines.append(f"💡 对比：我方均{th_us:.1f}本/英雄{hs_us:.0f}"
+                 f" vs 敌方均{th_th:.1f}本/英雄{hs_th:.0f}")
+    return "\n".join(lines)
+
+
+async def _fmt_cwl_roster(tag: str, size: int) -> str:
+    """按实力推荐联赛参战名单（大本→英雄总级→战争星）。"""
+    clan = await coc.get_clan(tag)
+    members = clan.get("memberList", [])
+    if not members:
+        return "部落还没有成员数据"
+    profiles = await coc.get_players([m["tag"] for m in members], ttl=600)
+    scored = []
+    for m in members:
+        p = profiles.get(m["tag"])
+        th = (p or m).get("townHallLevel", 0)
+        scored.append((m["name"], th,
+                       _hero_sum(p) if p else -1,
+                       p.get("warStars", 0) if p else 0,
+                       p is not None))
+    scored.sort(key=lambda x: (-x[1], -x[2], -x[3]))
+
+    lines = [f"📋 联赛推荐阵容 {size}人 | {clan['name']}（按 大本→英雄→战争星）"]
+    for i, (name, th, hs, ws, ok) in enumerate(scored[:size], 1):
+        lines.append(f"{i}. {name} {th}本" +
+                     (f" 英雄{hs} ⭐{ws}" if ok else "（档案拉取失败，按本排序）"))
+    subs = scored[size:size + 3]
+    if subs:
+        lines.append("—— 替补 ——")
+        for j, (name, th, hs, _ws, ok) in enumerate(subs, size + 1):
+            lines.append(f"{j}. {name} {th}本" + (f" 英雄{hs}" if ok else ""))
+    if len(members) < size:
+        lines.append(f"⚠️ 当前只有 {len(members)} 人，不足 {size} 人档")
+    lines.append(f"（另一档：联赛-阵容 {30 if size == 15 else 15}）")
+    return "\n".join(lines)
 
 
 # ---------------- 摸鱼榜 / 升级建议 ----------------
