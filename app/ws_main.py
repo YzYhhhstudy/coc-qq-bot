@@ -20,13 +20,25 @@ _snap_task = None
 
 
 async def _snapshot_loop():
-    """每 12 小时给所有已绑定玩家拍成长快照（同日覆盖，等效每日一条）。"""
+    """每 12 小时快照：已绑定玩家的成长数据 + 已绑定部落的全员数据（周报用）。
+
+    同日覆盖，等效每日一条。
+    """
     while True:
         for tag in store.all_bound_player_tags():
             try:
                 store.save_snapshot(tag, commands.snapshot_of(await coc.get_player(tag)))
             except Exception:
                 pass  # 单个失败不影响其他玩家
+        for ctag in store.all_bound_clan_tags():
+            try:
+                members = (await coc.get_clan(ctag)).get("memberList", [])
+                profiles = await coc.get_players([m["tag"] for m in members],
+                                                 concurrency=5)
+                store.save_member_snapshot(
+                    ctag, commands.member_snapshot_of(members, profiles))
+            except Exception:
+                pass  # 单个部落失败不影响其他部落
         await asyncio.sleep(12 * 3600)
 
 

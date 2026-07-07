@@ -2,6 +2,7 @@
 
 文档: https://developer.clashofclans.com/#/documentation
 """
+import asyncio
 import os
 import time
 import urllib.parse
@@ -58,18 +59,43 @@ async def get_player(tag: str) -> dict:
     return await _get(f"/players/{_enc(tag)}")
 
 
+async def get_players(tags: list[str], ttl: int = CACHE_TTL,
+                      concurrency: int = 10) -> dict[str, dict | None]:
+    """并发拉取多名玩家档案；单个失败记 None，不影响整批。"""
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(t: str) -> dict | None:
+        async with sem:
+            try:
+                return await _get(f"/players/{_enc(t)}", ttl)
+            except Exception:
+                return None
+
+    return dict(zip(tags, await asyncio.gather(*(one(t) for t in tags))))
+
+
 async def get_league_group(tag: str) -> dict:
     """联赛(CWL)分组，仅联赛周有数据。"""
     return await _get(f"/clans/{_enc(tag)}/currentwar/leaguegroup")
 
 
-async def get_capital_raids(tag: str) -> dict:
-    """都城突袭周末，最近一期。"""
-    return await _get(f"/clans/{_enc(tag)}/capitalraidseasons?limit=1")
+async def get_capital_raids(tag: str, limit: int = 1) -> dict:
+    """都城突袭周末，最近 N 期（默认 1）。"""
+    return await _get(f"/clans/{_enc(tag)}/capitalraidseasons?limit={limit}")
 
 
 async def search_clans(name: str) -> dict:
     return await _get(f"/clans?name={urllib.parse.quote(name)}&limit=5")
+
+
+async def get_clan_rankings(location_id: str) -> dict:
+    """地区部落排行（官方只提供前 200）。榜单变化慢，缓存 1 小时。"""
+    return await _get(f"/locations/{location_id}/rankings/clans?limit=200", ttl=3600)
+
+
+async def get_player_rankings(location_id: str) -> dict:
+    """地区玩家排行（即传奇杯奖杯榜，前 200）。"""
+    return await _get(f"/locations/{location_id}/rankings/players?limit=200", ttl=3600)
 
 
 async def get_cwl_war(war_tag: str) -> dict:

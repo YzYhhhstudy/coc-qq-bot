@@ -6,7 +6,7 @@
 import asyncio
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -55,18 +55,29 @@ SIEGE = {"Wall Wrecker", "Battle Blimp", "Stone Slammer", "Siege Barracks",
          "Log Launcher", "Flame Flinger", "Battle Drill", "Troop Launcher"}
 SUPER_TROOPS = {"Sneaky Goblin", "Rocket Balloon", "Inferno Dragon", "Ice Hound"}
 ROLE_CN = {"leader": "首领", "coLeader": "副首领", "admin": "长老", "member": "成员"}
+
+# 各大本英雄满级总和（蛮王+女皇+亡灵王子+大守护+皇战），随版本更新人工校对 wiki
+TH_HERO_MAX = {7: 10, 8: 30, 9: 70, 10: 100, 11: 150, 12: 210, 13: 275,
+               14: 320, 15: 355, 16: 385, 17: 415, 18: 440}
+
+# 32000056=China（实测核对 /locations；32000059 是哥伦比亚，勿混）
+LOCATION_IDS = {"全球": "global", "国服": "32000056", "中国": "32000056"}
 WAR_STATE = {"preparation": "备战日", "inWar": "战斗日", "warEnded": "已结束",
              "notInWar": "当前没有部落战"}
 
 HELP = (
     "🛡️ 部落冲突助手（子功能用 - 连接）\n"
-    "【部落】绑定 #TAG｜解绑｜部落 [#TAG]｜成员 [#TAG]｜捐兵｜摸鱼榜｜突袭｜突袭-催刀｜搜索 名字\n"
-    "【部落战】部落战(=战况)｜部落战-对阵｜部落战-进度｜部落战-催刀｜部落战-敌刀｜部落战-复盘｜部落战-战绩\n"
-    "【联赛】联赛｜联赛-积分榜｜联赛-奖章｜联赛-对阵｜联赛-2(第2场)｜联赛-进度 [场次]｜联赛-催刀｜联赛-敌刀｜联赛-复盘 [场次]｜联赛-总结\n"
+    "【部落】绑定 #TAG｜解绑｜部落 [#TAG]｜成员 [#TAG]｜捐兵｜摸鱼榜｜周报｜"
+    "突袭｜突袭-催刀｜突袭-历史｜都城｜搜索 名字\n"
+    "【部落战】部落战(=战况)｜部落战-对阵｜部落战-进度｜部落战-催刀｜部落战-敌刀｜"
+    "部落战-复盘｜部落战-战绩｜部落战-侦查(敌方英雄摸底)\n"
+    "【联赛】联赛｜联赛-积分榜｜联赛-奖章｜联赛-对阵｜联赛-2(第2场)｜联赛-进度 [场次]｜"
+    "联赛-催刀｜联赛-敌刀｜联赛-复盘 [场次]｜联赛-总结｜联赛-侦查 [场次]｜联赛-阵容 [15|30]\n"
+    "【排行】排行-部落 [国服|全球]｜排行-玩家 [国服|全球]｜排行-传奇\n"
     "【玩法】玩法-流派-17(大本数)｜玩法-阵型-17｜玩法-个性阵-17｜"
     "玩法-阵型收录/流派收录 链接 [备注]｜玩法-收录列表\n"
-    "【玩家】玩家 #TAG｜玩家-英雄/部队/法术/建议 #TAG\n"
-    "【我】绑定玩家 #TAG｜解绑玩家｜我｜我-英雄/部队/法术/建议/成长｜我-流派名(如 我-隐龙龙骑)\n"
+    "【玩家】玩家 #TAG｜玩家-英雄/部队/法术/建议 #TAG｜传奇 #TAG\n"
+    "【我】绑定玩家 #TAG｜解绑玩家｜我｜我-英雄/部队/法术/建议/成长/传奇｜我-流派名(如 我-隐龙龙骑)\n"
     "带 [#TAG] 的指令可以查任意部落，不带就查已绑定的\n"
     "换绑：直接重新「绑定」即可覆盖"
 )
@@ -115,7 +126,15 @@ async def handle(group_openid: str, content: str) -> str:
                         "这个只能进游戏看。能查的有：我-英雄 / 我-部队 / 我-法术")
             if sub == "成长":
                 return await _fmt_growth(ptag)
+            if sub == "传奇":
+                return await _fmt_legend(ptag)
             return _fmt_player_sub(await coc.get_player(ptag), sub)
+
+        if main == "传奇":
+            ptag = args[0] if args else store.get_player_tag(group_openid)
+            if not ptag:
+                return "用法：传奇 #玩家TAG（或先「绑定玩家」后发：我-传奇）"
+            return await _fmt_legend(ptag)
 
         if main == "搜索":
             if not args:
@@ -166,6 +185,21 @@ async def handle(group_openid: str, content: str) -> str:
                     "玩法-阵型收录 链接 / 玩法-流派收录 链接 / "
                     "玩法-收录列表（数字=大本等级，绑定玩家后可省略）")
 
+        # ---- 排行榜（官方地区榜，不需要绑定） ----
+        if main == "排行":
+            loc_name = (args[0] if args and args[0] in LOCATION_IDS
+                        else ("全球" if sub == "传奇" else "国服"))
+            loc_id = LOCATION_IDS[loc_name]
+            if sub == "部落":
+                return _fmt_clan_rankings(
+                    loc_name, await coc.get_clan_rankings(loc_id),
+                    store.get_clan_tag(group_openid))
+            if sub in ("玩家", "传奇"):
+                return _fmt_player_rankings(
+                    loc_name, await coc.get_player_rankings(loc_id),
+                    store.get_player_tag(group_openid))
+            return "排行子功能：排行-部落 [国服|全球] / 排行-玩家 [国服|全球] / 排行-传奇"
+
         # ---- 部落类（可带 #TAG 查任意部落，否则用绑定的） ----
         # 纯数字参数（如 对阵 2）不是 TAG
         tag_arg = None
@@ -174,13 +208,15 @@ async def handle(group_openid: str, content: str) -> str:
             tag_arg = args[0]
         bound = store.get_clan_tag(group_openid)
         clan_cmds = ("部落", "成员", "战况", "战绩", "突袭", "捐兵", "部落战",
-                     "摸鱼榜", "摸鱼", "活跃",
+                     "摸鱼榜", "摸鱼", "活跃", "都城", "周报",
                      "联赛", "对阵", "积分榜", "排名", "奖章")
         if main in clan_cmds:
             tag = tag_arg or bound
             if not tag:
                 return "还没绑定部落，先发：绑定 #部落TAG（或在指令后直接带 #TAG）"
 
+            if main == "周报" or (main == "部落" and sub == "周报"):
+                return await _fmt_weekly(tag)
             if main == "部落":
                 return _fmt_clan(await coc.get_clan(tag))
             if main == "成员":
@@ -201,15 +237,24 @@ async def handle(group_openid: str, content: str) -> str:
                     return _fmt_war_idle(war, enemy=True)
                 if sub == "复盘":
                     return _fmt_war_review(war)
+                if sub == "侦查":
+                    return await _fmt_scout(war)
                 return _fmt_war(war)
             if main == "突袭":
                 if sub == "催刀":
                     return _fmt_raid_idle(await coc.get_capital_raids(tag))
+                if sub == "历史":
+                    return _fmt_raid_history(await coc.get_capital_raids(tag, limit=6))
                 return _fmt_raids(await coc.get_capital_raids(tag))
+            if main == "都城":
+                return _fmt_capital(await coc.get_clan(tag))
             if main == "捐兵":
                 return _fmt_donations(await coc.get_clan(tag))
             if main in ("摸鱼榜", "摸鱼", "活跃"):
                 return await _fmt_slackers(tag)
+            if main == "联赛" and sub == "阵容":  # 非联赛周也能用，须在 leaguegroup 之前
+                size = 30 if args and args[0] == "30" else 15
+                return await _fmt_cwl_roster(tag, size)
 
             # 联赛族（含旧别名）
             try:
@@ -227,6 +272,12 @@ async def handle(group_openid: str, content: str) -> str:
                 return await _fmt_cwl_matchup(tag, group, round_no)
             if sub.isdigit():
                 return await _fmt_cwl_matchup(tag, group, int(sub))
+            if sub == "侦查":
+                round_no = int(args[0]) if args and args[0].isdigit() else None
+                rn, war, err = await _find_cwl_war(tag, group, round_no)
+                if err:
+                    return err
+                return await _fmt_scout(war, round_label=f"第{rn}场")
             if sub == "催刀":
                 return await _fmt_idle(tag, group, enemy=False)
             if sub in ("敌刀", "敌方"):
@@ -285,6 +336,11 @@ def _time_left(war: dict) -> str:
 
 def _chunk(items: list[str], n: int = 4) -> list[str]:
     return ["  ".join(items[i:i + n]) for i in range(0, len(items), n)]
+
+
+def _hero_sum(p: dict) -> int:
+    return sum(h.get("level", 0) for h in p.get("heroes", [])
+               if h.get("village") == "home")
 
 
 # ---------------- 部落 ----------------
@@ -391,6 +447,92 @@ def _fmt_raids(res: dict) -> str:
         top = sorted(members, key=lambda m: -m.get("capitalResourcesLooted", 0))[:5]
         lines.append("掠夺前五：" + "、".join(
             f"{m['name']}({m['capitalResourcesLooted']:,})" for m in top))
+    return "\n".join(lines)
+
+
+def _fmt_clan_rankings(loc_name: str, res: dict, our_tag: str | None) -> str:
+    items = res.get("items", [])
+    if not items:
+        return "暂无榜单数据"
+    lines = [f"🏅 {loc_name}部落排行 TOP10"]
+    for c in items[:10]:
+        lines.append(f"{c['rank']}. {c['name']} 积分{c.get('clanPoints', 0)} "
+                     f"成员{c.get('members', '?')}")
+    if our_tag:
+        hit = next((c for c in items
+                    if _norm_tag(c["tag"]) == _norm_tag(our_tag)), None)
+        lines.append(f"我们：{loc_name}第{hit['rank']}名 🎉" if hit
+                     else f"我们：暂未进{loc_name}前200")
+    lines.append("(官方榜单仅提供前200名)")
+    return "\n".join(lines)
+
+
+def _fmt_player_rankings(loc_name: str, res: dict, our_tag: str | None) -> str:
+    items = res.get("items", [])
+    if not items:
+        return "暂无榜单数据"
+    lines = [f"🏅 {loc_name}玩家排行 TOP10（传奇杯奖杯榜）"]
+    for p in items[:10]:
+        clan = (p.get("clan") or {}).get("name", "")
+        lines.append(f"{p['rank']}. {p['name']} 🏆{p.get('trophies', 0)}" +
+                     (f" [{clan}]" if clan else ""))
+    if our_tag:
+        hit = next((p for p in items
+                    if _norm_tag(p["tag"]) == _norm_tag(our_tag)), None)
+        lines.append(f"你：{loc_name}第{hit['rank']}名 🎉" if hit
+                     else f"你：暂未进{loc_name}前200")
+    lines.append("(官方榜单仅提供前200名)")
+    return "\n".join(lines)
+
+
+DISTRICT_CN = {"Capital Peak": "首都之巅", "Barbarian Camp": "野蛮人营地",
+               "Wizard Valley": "法师谷", "Balloon Lagoon": "气球环礁",
+               "Builder's Workshop": "建筑工坊", "Dragon Cliffs": "飞龙悬崖",
+               "Golem Quarry": "戈仑矿场", "Skeleton Park": "骷髅公园",
+               "Goblin Mines": "哥布林矿洞"}
+
+
+def _fmt_raid_history(res: dict) -> str:
+    items = res.get("items", [])
+    if not items:
+        return "还没有都城突袭记录"
+    lines = [f"📈 都城突袭近{len(items)}期（周末）"]
+    loots, attacks = [], []
+    for idx, r in enumerate(items):  # items 新的在前
+        day = _parse_ts(r["endTime"]).strftime("%m-%d") if r.get("endTime") else "?"
+        loot = r.get("capitalTotalLoot", 0)
+        ongoing = r.get("state") == "ongoing"
+        arrow = ""
+        if not ongoing and idx + 1 < len(items):  # 与上一期（更早）环比
+            prev = items[idx + 1].get("capitalTotalLoot", 0)
+            arrow = " ↑" if loot > prev else (" ↓" if loot < prev else " →")
+        lines.append(
+            f"{day}{'(进行中)' if ongoing else ''} 掠夺{loot:,}{arrow} "
+            f"奖章攻{r.get('offensiveReward', 0)}/防{r.get('defensiveReward', 0)} "
+            f"出刀{r.get('totalAttacks', 0)} 破{r.get('enemyDistrictsDestroyed', 0)}区")
+        if not ongoing:
+            loots.append(loot)
+            attacks.append(r.get("totalAttacks", 0))
+    if loots:
+        lines.append(f"均值：掠夺{sum(loots) / len(loots) / 10000:.1f}万 | "
+                     f"出刀{sum(attacks) / len(attacks):.0f}")
+    return "\n".join(lines)
+
+
+def _fmt_capital(c: dict) -> str:
+    cap = c.get("clanCapital") or {}
+    if not cap.get("capitalHallLevel"):
+        return "该部落还没解锁都城"
+    league = (c.get("capitalLeague") or {}).get("name", "")
+    lines = [
+        f"🏔️ 部落都城 | {c['name']}",
+        f"首都大厅 {cap['capitalHallLevel']} 本 | 都城积分 {c.get('clanCapitalPoints', 0)}" +
+        (f" | {_league_cn(league)}" if league else ""),
+    ]
+    districts = [f"{DISTRICT_CN.get(d.get('name'), d.get('name'))}{d.get('districtHallLevel', 0)}"
+                 for d in cap.get("districts", [])]
+    if districts:
+        lines += _chunk(districts, 4)
     return "\n".join(lines)
 
 
@@ -954,6 +1096,88 @@ def _fmt_raid_idle(res: dict) -> str:
     return "\n".join([f"⚡ 突袭没打满的（{len(pending)}人）"] + pending)
 
 
+# ---------------- 敌情侦查 / 阵容建议 ----------------
+
+async def _fmt_scout(war: dict, round_label: str = "") -> str:
+    """对面全员英雄摸底：批量拉档案，标出软柿子。"""
+    them = war["opponent"]
+    theirs = sorted(them.get("members", []), key=lambda m: m.get("mapPosition", 99))
+    if not theirs:
+        return "对面名单还没生成，稍后再查"
+    ours = sorted(war["clan"].get("members", []), key=lambda m: m.get("mapPosition", 99))
+    profiles = await coc.get_players([m["tag"] for m in theirs], ttl=600)
+    our_profiles = await coc.get_players([m["tag"] for m in ours], ttl=600)
+
+    rows = []  # (序号, 名字, 本, 英雄总级|None, 满级占比|None)
+    for i, m in enumerate(theirs, 1):
+        th = m.get("townhallLevel", 0)
+        p = profiles.get(m["tag"])
+        hs = _hero_sum(p) if p else None
+        mx = TH_HERO_MAX.get(th)
+        pct = hs / mx if (hs is not None and mx) else None
+        rows.append((i, m["name"], th, hs, pct))
+
+    lines = [f"🔭 敌情侦查 vs {them['name']}" + (f" | {round_label}" if round_label else "")]
+    for i, name, th, hs, pct in rows:
+        if hs is None:
+            lines.append(f"{i}. {name} {th}本 英雄?")
+        elif pct is None:
+            lines.append(f"{i}. {name} {th}本 英雄{hs}")
+        else:
+            mark = "⚠️" if pct < 0.7 else ""
+            lines.append(f"{i}. {name} {th}本 英雄{hs}/{TH_HERO_MAX[th]}({pct:.0%}){mark}")
+
+    soft = sorted((r for r in rows if r[3] is not None),
+                  key=lambda r: (r[2], r[3]))[:4]
+    if soft:
+        lines.append("—— 软柿子（本低/英雄低）——")
+        lines += _chunk([f"{i}号{name}" for i, name, _th, _hs, _p in soft], 4)
+
+    def _avgs(members, profs):
+        ths = [m.get("townhallLevel", 0) for m in members]
+        sums = [_hero_sum(p) for p in (profs.get(m["tag"]) for m in members) if p]
+        return (sum(ths) / len(ths) if ths else 0,
+                sum(sums) / len(sums) if sums else 0)
+
+    th_us, hs_us = _avgs(ours, our_profiles)
+    th_th, hs_th = _avgs(theirs, profiles)
+    lines.append(f"💡 对比：我方均{th_us:.1f}本/英雄{hs_us:.0f}"
+                 f" vs 敌方均{th_th:.1f}本/英雄{hs_th:.0f}")
+    return "\n".join(lines)
+
+
+async def _fmt_cwl_roster(tag: str, size: int) -> str:
+    """按实力推荐联赛参战名单（大本→英雄总级→战争星）。"""
+    clan = await coc.get_clan(tag)
+    members = clan.get("memberList", [])
+    if not members:
+        return "部落还没有成员数据"
+    profiles = await coc.get_players([m["tag"] for m in members], ttl=600)
+    scored = []
+    for m in members:
+        p = profiles.get(m["tag"])
+        th = (p or m).get("townHallLevel", 0)
+        scored.append((m["name"], th,
+                       _hero_sum(p) if p else -1,
+                       p.get("warStars", 0) if p else 0,
+                       p is not None))
+    scored.sort(key=lambda x: (-x[1], -x[2], -x[3]))
+
+    lines = [f"📋 联赛推荐阵容 {size}人 | {clan['name']}（按 大本→英雄→战争星）"]
+    for i, (name, th, hs, ws, ok) in enumerate(scored[:size], 1):
+        lines.append(f"{i}. {name} {th}本" +
+                     (f" 英雄{hs} ⭐{ws}" if ok else "（档案拉取失败，按本排序）"))
+    subs = scored[size:size + 3]
+    if subs:
+        lines.append("—— 替补 ——")
+        for j, (name, th, hs, _ws, ok) in enumerate(subs, size + 1):
+            lines.append(f"{j}. {name} {th}本" + (f" 英雄{hs}" if ok else ""))
+    if len(members) < size:
+        lines.append(f"⚠️ 当前只有 {len(members)} 人，不足 {size} 人档")
+    lines.append(f"（另一档：联赛-阵容 {30 if size == 15 else 15}）")
+    return "\n".join(lines)
+
+
 # ---------------- 摸鱼榜 / 升级建议 ----------------
 
 async def _fmt_slackers(tag: str) -> str:
@@ -1149,14 +1373,126 @@ def _fmt_strategy_advice(p: dict, s: dict) -> str:
     return "\n".join(lines)
 
 
-SNAP_FIELDS = ("townHallLevel", "expLevel", "trophies", "warStars", "donations")
+SNAP_FIELDS = ("townHallLevel", "expLevel", "trophies", "warStars", "donations",
+               "attackWins", "defenseWins")
 
 
 def snapshot_of(p: dict) -> dict:
     snap = {k: p.get(k, 0) for k in SNAP_FIELDS}
     snap["heroSum"] = sum(h.get("level", 0) for h in p.get("heroes", [])
                           if h.get("village") == "home")
+    snap["league"] = (p.get("league") or {}).get("name", "")
     return snap
+
+
+def member_snapshot_of(members: list[dict], profiles: dict[str, dict | None]) -> dict:
+    """合成整部落成员快照：memberList 提供捐兵/奖杯，档案补充战争星/进攻胜。"""
+    snap = {}
+    for m in members:
+        entry = {
+            "name": m.get("name", "?"),
+            "th": m.get("townHallLevel", 0),
+            "trophies": m.get("trophies", 0),
+            "donations": m.get("donations", 0),
+            "received": m.get("donationsReceived", 0),
+        }
+        p = profiles.get(m["tag"])
+        if p:  # 档案拉取失败则只存 memberList 字段，周报对应项优雅降级
+            entry["warStars"] = p.get("warStars", 0)
+            entry["attackWins"] = p.get("attackWins", 0)
+        snap[m["tag"]] = entry
+    return snap
+
+
+async def _fmt_legend(ptag: str) -> str:
+    """传奇杯每日战报：逐日杯数净变化 + 攻/防胜场变化。"""
+    p = await coc.get_player(ptag)
+    league = (p.get("league") or {}).get("name", "")
+    if league != "Legend League":
+        return (f"{p['name']} 当前不在传奇杯"
+                f"（{_league_cn(league) if league else '无段位'}，🏆{p['trophies']}）")
+    store.save_snapshot(p["tag"], snapshot_of(p))  # 顺手记录今天
+    snaps = store.get_snapshots(p["tag"], 9)
+    if len(snaps) < 2:
+        return (f"🗻 已开始记录 {p['name']} 的传奇战报（每天自动快照），"
+                "明天起可看每日杯数变化")
+    lines = [f"🗻 传奇战报 | {p['name']} ({p['tag']}) 🏆{p['trophies']}"]
+    for (d0, s0), (d1, s1) in zip(snaps, snaps[1:]):
+        seg = f"{d0[5:]}→{d1[5:]} 🏆{s1.get('trophies', 0) - s0.get('trophies', 0):+d}"
+        if "attackWins" in s0 and "attackWins" in s1:
+            da = s1["attackWins"] - s0["attackWins"]
+            dd = s1.get("defenseWins", 0) - s0.get("defenseWins", 0)
+            seg += "（赛季重置）" if da < 0 or dd < 0 else f"（攻+{da} 防+{dd}）"
+        lines.append(seg)
+    lines.append("注：按每日快照净变化统计，非逐场明细（官方API不提供传奇出刀记录）；"
+                 "攻/防=进攻胜/防守胜次数变化")
+    return "\n".join(lines)
+
+
+async def _fmt_weekly(tag: str) -> str:
+    """部落周报：基于每日全员快照的 7 天增量报告。"""
+    clan = await coc.get_clan(tag)
+    members = clan.get("memberList", [])
+    profiles = await coc.get_players([m["tag"] for m in members], ttl=600)
+    store.save_member_snapshot(clan["tag"], member_snapshot_of(members, profiles))
+    snaps = store.get_member_snapshots(clan["tag"])
+    if len(snaps) < 2:
+        return "📊 周报数据积累中（今天已开始记录），至少隔天才能看到变化"
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+    base_day, base = snaps[0]
+    for d, s in snaps[:-1]:  # 取 ≥7 天前最新的一条，不足 7 天用最旧的
+        if d <= cutoff:
+            base_day, base = d, s
+    today_day, cur = snaps[-1]
+    ndays = (datetime.strptime(today_day, "%Y-%m-%d")
+             - datetime.strptime(base_day, "%Y-%m-%d")).days
+
+    reset_seen = False
+    deltas = []  # (name, 捐兵Δ, 奖杯Δ, 战争星Δ, 挂机?)
+    for ptag, now in cur.items():
+        old = base.get(ptag)
+        if not old:
+            continue
+        don = now.get("donations", 0) - old.get("donations", 0)
+        if don < 0:  # 赛季清零：按重置后数值计
+            don, reset_seen = now.get("donations", 0), True
+        cups = now.get("trophies", 0) - old.get("trophies", 0)
+        stars = (now.get("warStars", 0) - old.get("warStars", 0)
+                 if "warStars" in now and "warStars" in old else 0)
+        rec = now.get("received", 0) - old.get("received", 0)
+        atk = (now.get("attackWins", 0) - old.get("attackWins", 0)
+               if "attackWins" in now and "attackWins" in old else 0)
+        idle = don == 0 and max(rec, 0) == 0 and cups == 0 and max(atk, 0) == 0
+        deltas.append((now.get("name", "?"), don, cups, stars, idle))
+
+    lines = [f"📊 部落周报 | {clan['name']}（近{ndays}天：{base_day[5:]}→{today_day[5:]}）"]
+    top_don = sorted((d for d in deltas if d[1] > 0), key=lambda d: -d[1])[:5]
+    if top_don:
+        lines.append("📦 捐兵活跃 TOP5：")
+        lines += [f"  {n} +{don}" for n, don, *_ in top_don]
+    ups = sorted((d for d in deltas if d[2] > 0), key=lambda d: -d[2])[:3]
+    downs = sorted((d for d in deltas if d[2] < 0), key=lambda d: d[2])[:3]
+    if ups or downs:
+        lines.append("🏆 奖杯变化：" +
+                     "  ".join([f"{n}+{c}" for n, _d, c, *_ in ups] +
+                               [f"{n}{c}" for n, _d, c, *_ in downs]))
+    top_stars = sorted((d for d in deltas if d[3] > 0), key=lambda d: -d[3])[:5]
+    if top_stars:
+        lines.append("⭐ 战争星：" + "  ".join(f"{n}+{s}" for n, _d, _c, s, _ in top_stars))
+    idles = [n for n, *_rest, idle in deltas if idle]
+    if idles:
+        lines.append(f"😴 疑似挂机（{ndays}天0捐0收0杯0进攻胜，共{len(idles)}人）：")
+        lines += _chunk(idles[:15], 4)
+        if len(idles) > 15:
+            lines.append(f"…另有 {len(idles) - 15} 人")
+    joined = len([t for t in cur if t not in base])
+    left = len([t for t in base if t not in cur])
+    if joined or left:
+        lines.append(f"↔️ 成员变动：新进 {joined} 人 / 离开 {left} 人")
+    if reset_seen:
+        lines.append("注：期间经历赛季重置，捐兵按重置后数值统计")
+    return "\n".join(lines)
 
 
 async def _fmt_growth(ptag: str) -> str:

@@ -24,7 +24,10 @@ FAKE_GROUP = "smoke-test-group"
 async def test_commands(clan_tag: str):
     print("=== 指令逻辑（真实 CoC 数据）===")
     for cmd in [f"绑定 {clan_tag}", "部落", "成员", "战况", "战绩",
-                "联赛", "突袭", "搜索 tribe", "帮助"]:
+                "联赛", "突袭", "搜索 tribe", "帮助",
+                "部落战-侦查", "联赛-侦查", "联赛-阵容 15",
+                "突袭-历史", "都城", "周报",
+                "排行-部落 国服", "排行-玩家 全球", "排行-传奇"]:
         reply = await commands.handle(FAKE_GROUP, cmd)
         print(f"\n>>> @bot {cmd}\n{reply}")
 
