@@ -6,7 +6,7 @@
 import asyncio
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -121,7 +121,15 @@ async def handle(group_openid: str, content: str) -> str:
                         "这个只能进游戏看。能查的有：我-英雄 / 我-部队 / 我-法术")
             if sub == "成长":
                 return await _fmt_growth(ptag)
+            if sub == "传奇":
+                return await _fmt_legend(ptag)
             return _fmt_player_sub(await coc.get_player(ptag), sub)
+
+        if main == "传奇":
+            ptag = args[0] if args else store.get_player_tag(group_openid)
+            if not ptag:
+                return "用法：传奇 #玩家TAG（或先「绑定玩家」后发：我-传奇）"
+            return await _fmt_legend(ptag)
 
         if main == "搜索":
             if not args:
@@ -202,6 +210,8 @@ async def handle(group_openid: str, content: str) -> str:
             if not tag:
                 return "还没绑定部落，先发：绑定 #部落TAG（或在指令后直接带 #TAG）"
 
+            if main == "周报" or (main == "部落" and sub == "周报"):
+                return await _fmt_weekly(tag)
             if main == "部落":
                 return _fmt_clan(await coc.get_clan(tag))
             if main == "成员":
@@ -1387,6 +1397,97 @@ def member_snapshot_of(members: list[dict], profiles: dict[str, dict | None]) ->
             entry["attackWins"] = p.get("attackWins", 0)
         snap[m["tag"]] = entry
     return snap
+
+
+async def _fmt_legend(ptag: str) -> str:
+    """传奇杯每日战报：逐日杯数净变化 + 攻/防胜场变化。"""
+    p = await coc.get_player(ptag)
+    league = (p.get("league") or {}).get("name", "")
+    if league != "Legend League":
+        return (f"{p['name']} 当前不在传奇杯"
+                f"（{_league_cn(league) if league else '无段位'}，🏆{p['trophies']}）")
+    store.save_snapshot(p["tag"], snapshot_of(p))  # 顺手记录今天
+    snaps = store.get_snapshots(p["tag"], 9)
+    if len(snaps) < 2:
+        return (f"🗻 已开始记录 {p['name']} 的传奇战报（每天自动快照），"
+                "明天起可看每日杯数变化")
+    lines = [f"🗻 传奇战报 | {p['name']} ({p['tag']}) 🏆{p['trophies']}"]
+    for (d0, s0), (d1, s1) in zip(snaps, snaps[1:]):
+        seg = f"{d0[5:]}→{d1[5:]} 🏆{s1.get('trophies', 0) - s0.get('trophies', 0):+d}"
+        if "attackWins" in s0 and "attackWins" in s1:
+            da = s1["attackWins"] - s0["attackWins"]
+            dd = s1.get("defenseWins", 0) - s0.get("defenseWins", 0)
+            seg += "（赛季重置）" if da < 0 or dd < 0 else f"（攻+{da} 防+{dd}）"
+        lines.append(seg)
+    lines.append("注：按每日快照净变化统计，非逐场明细（官方API不提供传奇出刀记录）；"
+                 "攻/防=进攻胜/防守胜次数变化")
+    return "\n".join(lines)
+
+
+async def _fmt_weekly(tag: str) -> str:
+    """部落周报：基于每日全员快照的 7 天增量报告。"""
+    clan = await coc.get_clan(tag)
+    members = clan.get("memberList", [])
+    profiles = await coc.get_players([m["tag"] for m in members], ttl=600)
+    store.save_member_snapshot(clan["tag"], member_snapshot_of(members, profiles))
+    snaps = store.get_member_snapshots(clan["tag"])
+    if len(snaps) < 2:
+        return "📊 周报数据积累中（今天已开始记录），至少隔天才能看到变化"
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+    base_day, base = snaps[0]
+    for d, s in snaps[:-1]:  # 取 ≥7 天前最新的一条，不足 7 天用最旧的
+        if d <= cutoff:
+            base_day, base = d, s
+    today_day, cur = snaps[-1]
+    ndays = (datetime.strptime(today_day, "%Y-%m-%d")
+             - datetime.strptime(base_day, "%Y-%m-%d")).days
+
+    reset_seen = False
+    deltas = []  # (name, 捐兵Δ, 奖杯Δ, 战争星Δ, 挂机?)
+    for ptag, now in cur.items():
+        old = base.get(ptag)
+        if not old:
+            continue
+        don = now.get("donations", 0) - old.get("donations", 0)
+        if don < 0:  # 赛季清零：按重置后数值计
+            don, reset_seen = now.get("donations", 0), True
+        cups = now.get("trophies", 0) - old.get("trophies", 0)
+        stars = (now.get("warStars", 0) - old.get("warStars", 0)
+                 if "warStars" in now and "warStars" in old else 0)
+        rec = now.get("received", 0) - old.get("received", 0)
+        atk = (now.get("attackWins", 0) - old.get("attackWins", 0)
+               if "attackWins" in now and "attackWins" in old else 0)
+        idle = don == 0 and max(rec, 0) == 0 and cups == 0 and max(atk, 0) == 0
+        deltas.append((now.get("name", "?"), don, cups, stars, idle))
+
+    lines = [f"📊 部落周报 | {clan['name']}（近{ndays}天：{base_day[5:]}→{today_day[5:]}）"]
+    top_don = sorted((d for d in deltas if d[1] > 0), key=lambda d: -d[1])[:5]
+    if top_don:
+        lines.append("📦 捐兵活跃 TOP5：")
+        lines += [f"  {n} +{don}" for n, don, *_ in top_don]
+    ups = sorted((d for d in deltas if d[2] > 0), key=lambda d: -d[2])[:3]
+    downs = sorted((d for d in deltas if d[2] < 0), key=lambda d: d[2])[:3]
+    if ups or downs:
+        lines.append("🏆 奖杯变化：" +
+                     "  ".join([f"{n}+{c}" for n, _d, c, *_ in ups] +
+                               [f"{n}{c}" for n, _d, c, *_ in downs]))
+    top_stars = sorted((d for d in deltas if d[3] > 0), key=lambda d: -d[3])[:5]
+    if top_stars:
+        lines.append("⭐ 战争星：" + "  ".join(f"{n}+{s}" for n, _d, _c, s, _ in top_stars))
+    idles = [n for n, *_rest, idle in deltas if idle]
+    if idles:
+        lines.append(f"😴 疑似挂机（{ndays}天0捐0收0杯0进攻胜，共{len(idles)}人）：")
+        lines += _chunk(idles[:15], 4)
+        if len(idles) > 15:
+            lines.append(f"…另有 {len(idles) - 15} 人")
+    joined = len([t for t in cur if t not in base])
+    left = len([t for t in base if t not in cur])
+    if joined or left:
+        lines.append(f"↔️ 成员变动：新进 {joined} 人 / 离开 {left} 人")
+    if reset_seen:
+        lines.append("注：期间经历赛季重置，捐兵按重置后数值统计")
+    return "\n".join(lines)
 
 
 async def _fmt_growth(ptag: str) -> str:
