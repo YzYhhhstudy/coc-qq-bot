@@ -59,6 +59,8 @@ ROLE_CN = {"leader": "首领", "coLeader": "副首领", "admin": "长老", "memb
 # 各大本英雄满级总和（蛮王+女皇+亡灵王子+大守护+皇战），随版本更新人工校对 wiki
 TH_HERO_MAX = {7: 10, 8: 30, 9: 70, 10: 100, 11: 150, 12: 210, 13: 275,
                14: 320, 15: 355, 16: 385, 17: 415, 18: 440}
+
+LOCATION_IDS = {"全球": "global", "国服": "32000059", "中国": "32000059"}
 WAR_STATE = {"preparation": "备战日", "inWar": "战斗日", "warEnded": "已结束",
              "notInWar": "当前没有部落战"}
 
@@ -169,6 +171,21 @@ async def handle(group_openid: str, content: str) -> str:
             return ("玩法子功能：玩法-流派-17 / 玩法-阵型-17 / 玩法-个性阵-17 / "
                     "玩法-阵型收录 链接 / 玩法-流派收录 链接 / "
                     "玩法-收录列表（数字=大本等级，绑定玩家后可省略）")
+
+        # ---- 排行榜（官方地区榜，不需要绑定） ----
+        if main == "排行":
+            loc_name = (args[0] if args and args[0] in LOCATION_IDS
+                        else ("全球" if sub == "传奇" else "国服"))
+            loc_id = LOCATION_IDS[loc_name]
+            if sub == "部落":
+                return _fmt_clan_rankings(
+                    loc_name, await coc.get_clan_rankings(loc_id),
+                    store.get_clan_tag(group_openid))
+            if sub in ("玩家", "传奇"):
+                return _fmt_player_rankings(
+                    loc_name, await coc.get_player_rankings(loc_id),
+                    store.get_player_tag(group_openid))
+            return "排行子功能：排行-部落 [国服|全球] / 排行-玩家 [国服|全球] / 排行-传奇"
 
         # ---- 部落类（可带 #TAG 查任意部落，否则用绑定的） ----
         # 纯数字参数（如 对阵 2）不是 TAG
@@ -415,6 +432,41 @@ def _fmt_raids(res: dict) -> str:
         top = sorted(members, key=lambda m: -m.get("capitalResourcesLooted", 0))[:5]
         lines.append("掠夺前五：" + "、".join(
             f"{m['name']}({m['capitalResourcesLooted']:,})" for m in top))
+    return "\n".join(lines)
+
+
+def _fmt_clan_rankings(loc_name: str, res: dict, our_tag: str | None) -> str:
+    items = res.get("items", [])
+    if not items:
+        return "暂无榜单数据"
+    lines = [f"🏅 {loc_name}部落排行 TOP10"]
+    for c in items[:10]:
+        lines.append(f"{c['rank']}. {c['name']} 积分{c.get('clanPoints', 0)} "
+                     f"成员{c.get('members', '?')}")
+    if our_tag:
+        hit = next((c for c in items
+                    if _norm_tag(c["tag"]) == _norm_tag(our_tag)), None)
+        lines.append(f"我们：{loc_name}第{hit['rank']}名 🎉" if hit
+                     else f"我们：暂未进{loc_name}前200")
+    lines.append("(官方榜单仅提供前200名)")
+    return "\n".join(lines)
+
+
+def _fmt_player_rankings(loc_name: str, res: dict, our_tag: str | None) -> str:
+    items = res.get("items", [])
+    if not items:
+        return "暂无榜单数据"
+    lines = [f"🏅 {loc_name}玩家排行 TOP10（传奇杯奖杯榜）"]
+    for p in items[:10]:
+        clan = (p.get("clan") or {}).get("name", "")
+        lines.append(f"{p['rank']}. {p['name']} 🏆{p.get('trophies', 0)}" +
+                     (f" [{clan}]" if clan else ""))
+    if our_tag:
+        hit = next((p for p in items
+                    if _norm_tag(p["tag"]) == _norm_tag(our_tag)), None)
+        lines.append(f"你：{loc_name}第{hit['rank']}名 🎉" if hit
+                     else f"你：暂未进{loc_name}前200")
+    lines.append("(官方榜单仅提供前200名)")
     return "\n".join(lines)
 
 
