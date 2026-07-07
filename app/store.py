@@ -27,6 +27,13 @@ def _conn() -> sqlite3.Connection:
         " PRIMARY KEY (player_tag, day))"
     )
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS member_snapshots ("
+        " clan_tag TEXT NOT NULL,"
+        " day TEXT NOT NULL,"
+        " data TEXT NOT NULL,"       # JSON: {player_tag: {name, th, trophies, donations, ...}}
+        " PRIMARY KEY (clan_tag, day))"
+    )
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS shared_links ("
         " id INTEGER PRIMARY KEY AUTOINCREMENT,"
         " kind TEXT NOT NULL,"       # base=阵型 / strategy=流派
@@ -91,6 +98,12 @@ def all_bound_player_tags() -> list[str]:
     return [r[0] for r in rows]
 
 
+def all_bound_clan_tags() -> list[str]:
+    with _conn() as conn:
+        rows = conn.execute("SELECT DISTINCT clan_tag FROM bindings").fetchall()
+    return [r[0] for r in rows]
+
+
 def save_snapshot(player_tag: str, data: dict) -> None:
     """每天每玩家一条，同日覆盖。"""
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -100,6 +113,27 @@ def save_snapshot(player_tag: str, data: dict) -> None:
             " ON CONFLICT(player_tag, day) DO UPDATE SET data = excluded.data",
             (player_tag, day, json.dumps(data)),
         )
+
+
+def save_member_snapshot(clan_tag: str, data: dict) -> None:
+    """每天每部落一条（全体成员打包成一个 JSON），同日覆盖。"""
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _conn() as conn:
+        conn.execute(
+            "INSERT INTO member_snapshots (clan_tag, day, data) VALUES (?, ?, ?)"
+            " ON CONFLICT(clan_tag, day) DO UPDATE SET data = excluded.data",
+            (clan_tag, day, json.dumps(data)),
+        )
+
+
+def get_member_snapshots(clan_tag: str, limit_days: int = 10) -> list[tuple[str, dict]]:
+    """按日期升序返回最近 N 天的部落成员快照。"""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT day, data FROM member_snapshots WHERE clan_tag = ?"
+            " ORDER BY day DESC LIMIT ?", (clan_tag, limit_days),
+        ).fetchall()
+    return [(d, json.loads(j)) for d, j in reversed(rows)]
 
 
 def add_shared_link(kind: str, url: str, note: str, th: int | None, submitter: str) -> bool:

@@ -1149,13 +1149,34 @@ def _fmt_strategy_advice(p: dict, s: dict) -> str:
     return "\n".join(lines)
 
 
-SNAP_FIELDS = ("townHallLevel", "expLevel", "trophies", "warStars", "donations")
+SNAP_FIELDS = ("townHallLevel", "expLevel", "trophies", "warStars", "donations",
+               "attackWins", "defenseWins")
 
 
 def snapshot_of(p: dict) -> dict:
     snap = {k: p.get(k, 0) for k in SNAP_FIELDS}
     snap["heroSum"] = sum(h.get("level", 0) for h in p.get("heroes", [])
                           if h.get("village") == "home")
+    snap["league"] = (p.get("league") or {}).get("name", "")
+    return snap
+
+
+def member_snapshot_of(members: list[dict], profiles: dict[str, dict | None]) -> dict:
+    """合成整部落成员快照：memberList 提供捐兵/奖杯，档案补充战争星/进攻胜。"""
+    snap = {}
+    for m in members:
+        entry = {
+            "name": m.get("name", "?"),
+            "th": m.get("townHallLevel", 0),
+            "trophies": m.get("trophies", 0),
+            "donations": m.get("donations", 0),
+            "received": m.get("donationsReceived", 0),
+        }
+        p = profiles.get(m["tag"])
+        if p:  # 档案拉取失败则只存 memberList 字段，周报对应项优雅降级
+            entry["warStars"] = p.get("warStars", 0)
+            entry["attackWins"] = p.get("attackWins", 0)
+        snap[m["tag"]] = entry
     return snap
 
 
