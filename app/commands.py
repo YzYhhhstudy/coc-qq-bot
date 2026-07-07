@@ -60,7 +60,8 @@ ROLE_CN = {"leader": "首领", "coLeader": "副首领", "admin": "长老", "memb
 TH_HERO_MAX = {7: 10, 8: 30, 9: 70, 10: 100, 11: 150, 12: 210, 13: 275,
                14: 320, 15: 355, 16: 385, 17: 415, 18: 440}
 
-LOCATION_IDS = {"全球": "global", "国服": "32000059", "中国": "32000059"}
+# 32000056=China（实测核对 /locations；32000059 是哥伦比亚，勿混）
+LOCATION_IDS = {"全球": "global", "国服": "32000056", "中国": "32000056"}
 WAR_STATE = {"preparation": "备战日", "inWar": "战斗日", "warEnded": "已结束",
              "notInWar": "当前没有部落战"}
 
