@@ -178,7 +178,7 @@ async def handle(group_openid: str, content: str) -> str:
             tag_arg = args[0]
         bound = store.get_clan_tag(group_openid)
         clan_cmds = ("部落", "成员", "战况", "战绩", "突袭", "捐兵", "部落战",
-                     "摸鱼榜", "摸鱼", "活跃",
+                     "摸鱼榜", "摸鱼", "活跃", "都城", "周报",
                      "联赛", "对阵", "积分榜", "排名", "奖章")
         if main in clan_cmds:
             tag = tag_arg or bound
@@ -211,7 +211,11 @@ async def handle(group_openid: str, content: str) -> str:
             if main == "突袭":
                 if sub == "催刀":
                     return _fmt_raid_idle(await coc.get_capital_raids(tag))
+                if sub == "历史":
+                    return _fmt_raid_history(await coc.get_capital_raids(tag, limit=6))
                 return _fmt_raids(await coc.get_capital_raids(tag))
+            if main == "都城":
+                return _fmt_capital(await coc.get_clan(tag))
             if main == "捐兵":
                 return _fmt_donations(await coc.get_clan(tag))
             if main in ("摸鱼榜", "摸鱼", "活跃"):
@@ -411,6 +415,57 @@ def _fmt_raids(res: dict) -> str:
         top = sorted(members, key=lambda m: -m.get("capitalResourcesLooted", 0))[:5]
         lines.append("掠夺前五：" + "、".join(
             f"{m['name']}({m['capitalResourcesLooted']:,})" for m in top))
+    return "\n".join(lines)
+
+
+DISTRICT_CN = {"Capital Peak": "首都之巅", "Barbarian Camp": "野蛮人营地",
+               "Wizard Valley": "法师谷", "Balloon Lagoon": "气球环礁",
+               "Builder's Workshop": "建筑工坊", "Dragon Cliffs": "飞龙悬崖",
+               "Golem Quarry": "戈仑矿场", "Skeleton Park": "骷髅公园",
+               "Goblin Mines": "哥布林矿洞"}
+
+
+def _fmt_raid_history(res: dict) -> str:
+    items = res.get("items", [])
+    if not items:
+        return "还没有都城突袭记录"
+    lines = [f"📈 都城突袭近{len(items)}期（周末）"]
+    loots, attacks = [], []
+    for idx, r in enumerate(items):  # items 新的在前
+        day = _parse_ts(r["endTime"]).strftime("%m-%d") if r.get("endTime") else "?"
+        loot = r.get("capitalTotalLoot", 0)
+        ongoing = r.get("state") == "ongoing"
+        arrow = ""
+        if not ongoing and idx + 1 < len(items):  # 与上一期（更早）环比
+            prev = items[idx + 1].get("capitalTotalLoot", 0)
+            arrow = " ↑" if loot > prev else (" ↓" if loot < prev else " →")
+        lines.append(
+            f"{day}{'(进行中)' if ongoing else ''} 掠夺{loot:,}{arrow} "
+            f"奖章攻{r.get('offensiveReward', 0)}/防{r.get('defensiveReward', 0)} "
+            f"出刀{r.get('totalAttacks', 0)} 破{r.get('enemyDistrictsDestroyed', 0)}区")
+        if not ongoing:
+            loots.append(loot)
+            attacks.append(r.get("totalAttacks", 0))
+    if loots:
+        lines.append(f"均值：掠夺{sum(loots) / len(loots) / 10000:.1f}万 | "
+                     f"出刀{sum(attacks) / len(attacks):.0f}")
+    return "\n".join(lines)
+
+
+def _fmt_capital(c: dict) -> str:
+    cap = c.get("clanCapital") or {}
+    if not cap.get("capitalHallLevel"):
+        return "该部落还没解锁都城"
+    league = (c.get("capitalLeague") or {}).get("name", "")
+    lines = [
+        f"🏔️ 部落都城 | {c['name']}",
+        f"首都大厅 {cap['capitalHallLevel']} 本 | 都城积分 {c.get('clanCapitalPoints', 0)}" +
+        (f" | {_league_cn(league)}" if league else ""),
+    ]
+    districts = [f"{DISTRICT_CN.get(d.get('name'), d.get('name'))}{d.get('districtHallLevel', 0)}"
+                 for d in cap.get("districts", [])]
+    if districts:
+        lines += _chunk(districts, 4)
     return "\n".join(lines)
 
 
