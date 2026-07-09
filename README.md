@@ -89,11 +89,14 @@ QQ 消息（私聊 / 群@）
    python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # Windows: .venv\Scripts\pip
    cp .env.example .env   # 然后编辑 .env，填入上面三个值
    ```
-4. **启动**：`.venv/bin/python -m app.ws_main`（Windows 直接双击 `scripts\run_windows.bat`）
+4. **启动**：`.venv/bin/python -m app.ws_main`（Windows 直接双击 `scripts\run_windows.bat`，自带崩溃重启）
 5. **配置沙箱**：q.qq.com 机器人管理端 → 沙箱配置 → **消息列表配置**里把自己的 QQ 加进去（最多 20 人，部落成员也可以加）
 6. **开聊**：QQ 消息列表里找到机器人，私聊发 `帮助`，然后 `绑定 #你的部落TAG`
 
 > `.env` 是你的密钥（照 `.env.example` 填，**不要**提交到 git）；`bindings.db` 是运行数据库，首次启动自动创建，无需准备。
+>
+> 两个脚本的分工：`run_windows.bat` 管**启动**（首次/重启电脑后）；`update.bat` 管**更新**（仓库出新版本时双击，
+> 自动拉代码+装依赖+重启机器人）。Linux 对应 `systemctl restart` + `git pull`。
 
 ## 💰 费用
 
