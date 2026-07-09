@@ -21,7 +21,7 @@ _upd_task = None
 
 
 async def _update_loop():
-    """每小时检查 GitHub main 是否有新版本；开了自动更新就地升级并重启进程。"""
+    """每天检查一次 GitHub main 是否有新版本；开了自动更新就地升级并重启进程。"""
     await asyncio.sleep(120)  # 启动后先稳定运行一会
     while True:
         new = await updater.check()
@@ -30,7 +30,7 @@ async def _update_loop():
             err = await updater.apply_update()  # 成功则进程退出，守护循环重启
             if err:
                 print(f"自动更新失败（保持当前版本运行）：{err}")
-        await asyncio.sleep(3600)
+        await asyncio.sleep(24 * 3600)
 
 
 async def _snapshot_loop():

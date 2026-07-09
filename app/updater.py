@@ -11,7 +11,7 @@ import sys
 import httpx
 
 REPO = os.environ.get("GITHUB_REPO", "YzYhhhstudy/coc-qq-bot")
-AUTO = os.environ.get("AUTO_UPDATE", "1") == "1"
+AUTO = os.environ.get("AUTO_UPDATE", "1") == "1"  # 检查频率：每天一次（ws_main._update_loop）
 
 update_available: str | None = None  # 远端新版本短 sha（无更新时为 None）
 

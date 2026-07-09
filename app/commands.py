@@ -99,7 +99,7 @@ async def _fmt_version() -> str:
     lines = [f"🤖 当前版本：{(lo or '未知')[:7]}"]
     if new:
         lines.append(f"📦 有新版本 {new}！" +
-                     ("自动更新已开启，1小时内自动生效"
+                     ("自动更新已开启，24小时内自动生效；急用就在部署机双击 update.bat"
                       if updater.AUTO else "在部署机上双击 scripts\\update.bat"))
     else:
         lines.append("✅ 已是最新")
