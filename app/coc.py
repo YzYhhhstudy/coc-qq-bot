@@ -98,6 +98,11 @@ async def get_player_rankings(location_id: str) -> dict:
     return await _get(f"/locations/{location_id}/rankings/players?limit=200", ttl=3600)
 
 
+async def get_goldpass() -> dict:
+    """当前赛季（黄金令牌）起止时间，赛季变化慢，缓存 1 小时。"""
+    return await _get("/goldpass/seasons/current", ttl=3600)
+
+
 async def get_cwl_war(war_tag: str) -> dict:
     """联赛单场对战详情（war_tag 来自 leaguegroup 的 rounds）。已结束的场次结果不变，缓存放宽。"""
     path = f"/clanwarleagues/wars/{_enc(war_tag)}"

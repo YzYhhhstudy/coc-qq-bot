@@ -69,10 +69,11 @@ HELP = (
     "🛡️ 部落冲突助手（子功能用 - 连接）\n"
     "【部落】绑定 #TAG｜解绑｜部落 [#TAG]｜成员 [#TAG]｜捐兵｜摸鱼榜｜周报｜"
     "突袭｜突袭-催刀｜突袭-历史｜都城｜搜索 名字\n"
-    "【部落战】部落战(=战况)｜部落战-对阵｜部落战-进度｜部落战-催刀｜部落战-敌刀｜"
+    "【部落战】部落战(=战况)｜部落战-对阵｜部落战-进度｜部落战-分配｜部落战-催刀｜部落战-敌刀｜"
     "部落战-复盘｜部落战-战绩｜部落战-侦查(敌方英雄摸底)\n"
-    "【联赛】联赛｜联赛-积分榜｜联赛-奖章｜联赛-对阵｜联赛-2(第2场)｜联赛-进度 [场次]｜"
+    "【联赛】联赛｜联赛-积分榜｜联赛-奖章｜联赛-对阵｜联赛-2(第2场)｜联赛-进度 [场次]｜联赛-分配(作战计划)｜"
     "联赛-催刀｜联赛-敌刀｜联赛-复盘 [场次]｜联赛-总结｜联赛-侦查 [场次]｜联赛-阵容 [15|30]\n"
+    "【日程】日程 — 赛季结束/联赛/突袭周末倒计时\n"
     "【排行】排行-部落 [国服|全球]｜排行-玩家 [国服|全球]｜排行-传奇\n"
     "【玩法】玩法-流派-17(大本数)｜玩法-阵型-17｜玩法-个性阵-17｜"
     "玩法-阵型收录/流派收录 链接 [备注]｜玩法-收录列表\n"
@@ -118,6 +119,8 @@ async def handle(group_openid: str, content: str) -> str:
     try:
         if main in ("版本", "version"):
             return await _fmt_version()
+        if main == "日程":
+            return await _fmt_schedule(store.get_clan_tag(group_openid))
 
         # ---- 绑定管理 ----
         if main == "绑定":
@@ -264,6 +267,8 @@ async def handle(group_openid: str, content: str) -> str:
                     return _fmt_war_review(war)
                 if sub == "侦查":
                     return await _fmt_scout(war)
+                if sub == "分配":
+                    return await _fmt_assign(war, "部落战")
                 return _fmt_war(war)
             if main == "突袭":
                 if sub == "催刀":
@@ -310,6 +315,20 @@ async def handle(group_openid: str, content: str) -> str:
             if sub == "进度":
                 round_no = int(args[0]) if args and args[0].isdigit() else None
                 return await _fmt_cwl_progress(tag, group, round_no)
+            if sub == "分配":
+                round_no = int(args[0]) if args and args[0].isdigit() else None
+                war = None
+                if round_no is None:  # 优先正在打的那场
+                    for r in reversed(_ready_rounds(group)):
+                        rn, w, _e = await _find_cwl_war(tag, group, r)
+                        if w and w.get("state") == "inWar":
+                            round_no, war = rn, w
+                            break
+                if war is None:
+                    round_no, war, err = await _find_cwl_war(tag, group, round_no)
+                    if err:
+                        return err
+                return await _fmt_assign(war, f"联赛第{round_no}场")
             if sub == "复盘":
                 round_no = int(args[0]) if args and args[0].isdigit() else None
                 return await _fmt_review(tag, group, round_no)
@@ -1200,6 +1219,111 @@ async def _fmt_cwl_roster(tag: str, size: int) -> str:
     if len(members) < size:
         lines.append(f"⚠️ 当前只有 {len(members)} 人，不足 {size} 人档")
     lines.append(f"（另一档：联赛-阵容 {30 if size == 15 else 15}）")
+    return "\n".join(lines)
+
+
+async def _fmt_assign(war: dict, title: str) -> str:
+    """作战分配：实力分(大本×1000+英雄总级)错位匹配，战斗日只派没出刀的人、
+    排除已被打满3星的目标。"""
+    if war.get("state") == "warEnded":
+        return "这场已经打完了，复盘请看：联赛-复盘 / 部落战-复盘"
+    us, them = war["clan"], war["opponent"]
+    in_war = war.get("state") == "inWar"
+    ours_all = sorted(us.get("members", []), key=lambda m: m.get("mapPosition", 99))
+    theirs_all = sorted(them.get("members", []), key=lambda m: m.get("mapPosition", 99))
+    our_no = {m["tag"]: i for i, m in enumerate(ours_all, 1)}
+    their_no = {m["tag"]: i for i, m in enumerate(theirs_all, 1)}
+
+    attackers = [m for m in ours_all if not (in_war and m.get("attacks"))]
+    if not attackers:
+        return "我方全部出刀完毕 ✅ 看结果：联赛-进度"
+    # 目标剩余星值（备战日全是3）
+    targets = []
+    for m in theirs_all:
+        taken = (m.get("bestOpponentAttack") or {}).get("stars", 0) if in_war else 0
+        if taken < 3:
+            targets.append((m, 3 - taken))
+    if not targets:
+        return "对面已被全部三星 🎉"
+
+    profiles = await coc.get_players(
+        [m["tag"] for m in attackers] + [m[0]["tag"] for m in targets], ttl=600)
+
+    def score(m: dict) -> int:
+        p = profiles.get(m["tag"])
+        return m.get("townhallLevel", 0) * 1000 + (_hero_sum(p) if p else 0)
+
+    attackers.sort(key=score, reverse=True)
+    targets.sort(key=lambda t: score(t[0]), reverse=True)
+
+    lines = [f"🗺️ {title} 作战分配 vs {them['name']}"
+             + ("（只列未出刀/未打满目标）" if in_war else "")]
+    n = len(targets)
+    for idx, a in enumerate(attackers):
+        t, remain = targets[idx] if idx < n else targets[idx % n]  # 多出的人补刀
+        diff = score(a) - score(t)
+        tag_ = "稳" if diff >= 1000 else ("均势" if diff >= 0 else "偏难⚠️")
+        extra = f" 补{remain}⭐" if in_war and remain < 3 else ""
+        redo = "（补刀）" if idx >= n else ""
+        lines.append(
+            f"{our_no[a['tag']]}号 {a['name']}({a['townhallLevel']}本)"
+            f" → 打 {their_no[t['tag']]}号 {t['name']}({t['townhallLevel']}本)"
+            f" {tag_}{extra}{redo}")
+    lines.append("💡 按实力错位匹配：强打强、弱打弱保三星；具体以流派克制微调，仅供参考")
+    return "\n".join(lines)
+
+
+def _dur_cn(delta) -> str:
+    mins = max(0, int(delta.total_seconds() // 60))
+    d, rem = divmod(mins, 1440)
+    h = rem // 60
+    return (f"{d}天{h}小时" if d else f"{h}小时{rem % 60:02d}分")
+
+
+async def _fmt_schedule(bound_clan: str | None) -> str:
+    """游戏日程：赛季结束 / 联赛 / 突袭周末（北京时间）。"""
+    now = datetime.now(timezone.utc)
+    cn = timezone(timedelta(hours=8))
+    lines = ["📅 部落冲突日程（北京时间）"]
+
+    try:
+        season_end = _parse_ts((await coc.get_goldpass())["endTime"])
+        lines.append(f"⏳ 赛季结束(奖杯重置/令牌换新)："
+                     f"{season_end.astimezone(cn):%m-%d %H:%M}，还有 {_dur_cn(season_end - now)}")
+    except Exception:
+        lines.append("⏳ 赛季结束：获取失败，稍后再试")
+
+    # 联赛：每月 1 日开打；已绑定部落则探测是否进行中
+    cwl_line = None
+    if bound_clan:
+        try:
+            group = await coc.get_league_group(bound_clan)
+            state = {"preparation": "备战中", "inWar": "进行中", "ended": "已结束"}.get(
+                group.get("state"), "进行中")
+            ready = _ready_rounds(group)
+            cwl_line = f"⚔️ 联赛(CWL)：{state}" + (f"，已生成第{ready[-1]}场" if ready else "")
+        except httpx.HTTPStatusError:
+            pass
+    if cwl_line is None:
+        nxt = (now.astimezone(cn).replace(day=1, hour=13, minute=0, second=0, microsecond=0))
+        if nxt <= now.astimezone(cn):
+            nxt = (nxt + timedelta(days=32)).replace(day=1)
+        cwl_line = f"⚔️ 下次联赛(CWL)：{nxt:%m-%d} 左右，还有 {_dur_cn(nxt - now.astimezone(cn))}"
+    lines.append(cwl_line)
+
+    # 突袭周末：UTC 周五 07:00 ~ 周一 07:00（北京 15:00）
+    fri = (now - timedelta(days=(now.weekday() - 4) % 7)).replace(
+        hour=7, minute=0, second=0, microsecond=0)
+    if fri > now:
+        fri -= timedelta(days=7)
+    raid_end = fri + timedelta(days=3)
+    if now < raid_end:
+        lines.append(f"⚡ 突袭周末：进行中 🔥，{raid_end.astimezone(cn):%m-%d %H:%M} 结束"
+                     f"（还有 {_dur_cn(raid_end - now)}）")
+    else:
+        nfri = fri + timedelta(days=7)
+        lines.append(f"⚡ 下次突袭周末：{nfri.astimezone(cn):%m-%d %H:%M} 开始，"
+                     f"还有 {_dur_cn(nfri - now)}")
     return "\n".join(lines)
 
 
