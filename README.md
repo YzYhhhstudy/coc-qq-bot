@@ -1,7 +1,7 @@
 # coc-qq-bot — 部落冲突 QQ 群助手（官方平台 · 被动回复版）
 
 > A QQ bot for Clash of Clans clans, built on the official QQ Bot Open Platform (WebSocket) and the official CoC API.
-> Features: clan/war/CWL queries, war-day nudges, medal calculator, win-probability estimate, player growth tracking, and monthly-curated meta (strategies & base layouts). MIT licensed.
+> Features: clan/war/CWL queries, war-day nudges, enemy scouting, medal calculator, win-probability estimate, weekly clan reports, official leaderboards, Legend daily logs, player growth tracking, and monthly-curated meta (strategies & base layouts). MIT licensed.
 
 QQ 机器人：私聊发指令（或群里 `@机器人 <指令>`），查询部落的公开信息——成员、部落战、联赛、玩家详情、流派攻略。
 数据来自 **Supercell 官方 Clash of Clans API**（免费），消息通道走 **QQ 开放平台官方接口**（合规、不封号）。
@@ -159,6 +159,9 @@ WebSocket 出站连接**不需要**公网 IP、域名、备案、证书。总成
 > 给 Claude 的提示：更新时调研 Blueprint CoC（有游戏内一键复制的 CopyArmy 链接）、TapTap/bilibili 中文流派统计；
 > 覆盖 TH13-18 的主流流派（名称/别名/思路/英雄装备/关键兵种法术的 API 英文名/配兵链接），
 > 核对阵型站分级页 URL 是否仍有效；超级兵在 troops 检查里登记为原兵种名。
+>
+> 除 meta.py 外，`app/commands.py` 里还有三份人工维护数据，大版本更新（新大本/新英雄/联赛改制）后顺带校对：
+> `TH_HERO_MAX`（各大本英雄满级总和，侦查功能用）、`MEDAL_TABLE`（联赛奖章表）、`LOCATION_IDS`（地区 ID，改动后必须实测——上次就把哥伦比亚当成了国服）。
 
 ## 迁移 / 常驻部署
 
