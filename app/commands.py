@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from . import coc, meta, store
+from . import coc, meta, store, updater
 
 # ---------------- 数据表 ----------------
 
@@ -85,15 +85,40 @@ HELP = (
 
 # ---------------- 入口 ----------------
 
+def _help() -> str:
+    if updater.update_available:
+        tip = ("自动更新已开启，稍后自动生效" if updater.AUTO
+               else "请在部署机上双击 scripts\\update.bat")
+        return HELP + f"\n📦 机器人有新版本 {updater.update_available}！{tip}"
+    return HELP
+
+
+async def _fmt_version() -> str:
+    lo = await updater.local_sha()
+    new = await updater.check()
+    lines = [f"🤖 当前版本：{(lo or '未知')[:7]}"]
+    if new:
+        lines.append(f"📦 有新版本 {new}！" +
+                     ("自动更新已开启，1小时内自动生效"
+                      if updater.AUTO else "在部署机上双击 scripts\\update.bat"))
+    else:
+        lines.append("✅ 已是最新")
+    lines.append(f"自动更新：{'开' if updater.AUTO else '关'}（.env 的 AUTO_UPDATE 控制）")
+    return "\n".join(lines)
+
+
 async def handle(group_openid: str, content: str) -> str:
     parts = content.split()
     if not parts:
-        return HELP
+        return _help()
     cmd = parts[0].replace("－", "-").replace("—", "-")
     args = parts[1:]
     main, _, sub = cmd.partition("-")
 
     try:
+        if main in ("版本", "version"):
+            return await _fmt_version()
+
         # ---- 绑定管理 ----
         if main == "绑定":
             if not args:
@@ -292,9 +317,9 @@ async def handle(group_openid: str, content: str) -> str:
                 return await _fmt_season_summary(tag, group)
             if main == "联赛" and not sub:
                 return _fmt_league(group)
-            return HELP
+            return _help()
 
-        return HELP
+        return _help()
 
     except httpx.HTTPStatusError as e:
         code = e.response.status_code

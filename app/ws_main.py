@@ -14,9 +14,23 @@ import asyncio
 import botpy
 from botpy.message import C2CMessage, GroupMessage
 
-from app import coc, commands, store
+from app import coc, commands, store, updater
 
 _snap_task = None
+_upd_task = None
+
+
+async def _update_loop():
+    """每小时检查 GitHub main 是否有新版本；开了自动更新就地升级并重启进程。"""
+    await asyncio.sleep(120)  # 启动后先稳定运行一会
+    while True:
+        new = await updater.check()
+        if new and updater.AUTO:
+            print(f"📦 发现新版本 {new}，自动更新中…")
+            err = await updater.apply_update()  # 成功则进程退出，守护循环重启
+            if err:
+                print(f"自动更新失败（保持当前版本运行）：{err}")
+        await asyncio.sleep(3600)
 
 
 async def _snapshot_loop():
@@ -44,9 +58,12 @@ async def _snapshot_loop():
 
 class CocBot(botpy.Client):
     async def on_ready(self):
-        global _snap_task
+        global _snap_task, _upd_task
+        loop = asyncio.get_event_loop()
         if _snap_task is None or _snap_task.done():
-            _snap_task = asyncio.get_event_loop().create_task(_snapshot_loop())
+            _snap_task = loop.create_task(_snapshot_loop())
+        if _upd_task is None or _upd_task.done():
+            _upd_task = loop.create_task(_update_loop())
         print(f"✅ 机器人「{self.robot.name}」已连接网关，等待消息…")
 
     # 群聊 @ 消息（平台开放群场景后自动生效，绑定关系按群存）
