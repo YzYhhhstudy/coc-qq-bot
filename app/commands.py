@@ -209,6 +209,9 @@ async def handle(group_openid: str, content: str) -> str:
                 if not args or not args[0].isdigit():
                     return "用法：玩法-收录删除 编号（编号看：玩法-收录列表）"
                 return "✅ 已删除" if store.delete_shared_link(int(args[0])) else "没有这个编号"
+            strat = meta.find_strategy(kind)  # 玩法-隐龙龙骑：免绑定看流派详情
+            if strat:
+                return _fmt_strategy_info(strat)
             return ("玩法子功能：玩法-流派-17 / 玩法-阵型-17 / 玩法-个性阵-17 / "
                     "玩法-阵型收录 链接 / 玩法-流派收录 链接 / "
                     "玩法-收录列表（数字=大本等级，绑定玩家后可省略）")
@@ -1460,8 +1463,11 @@ def _fmt_meta_strategies(th: int | None) -> str:
     if not strats:
         lines.append("该大本暂无收录流派，试试相邻大本，或等下次 meta 更新")
     for s in strats:
-        link = "📎有配兵链接" if s.get("army") else ""
-        lines.append(f"· {s['key']}（{'/'.join(s['aliases'][:2])}）{link}\n  {s['desc']}")
+        lines.append(f"· {s['key']}（{'/'.join(s['aliases'][:2])}）\n  {s['desc']}")
+        if s.get("army"):
+            lines.append(f"  📎一键复制配兵：{s['army']}")
+        else:
+            lines.append("  配兵：常青流派，进游戏军队页或 blueprintcoc.com 搜同名")
     lines += _shared_section("strategy", th)
     if strats:
         lines.append(f"查详情+个人等级检查：我-流派名（如 我-{strats[0]['key']}）")
@@ -1483,6 +1489,22 @@ def _fmt_base_links(th: int | None, fun: bool) -> str:
     lines.append("进页面挑好点「Copy Base」即可导入游戏"
                  + ("；皮卡丘/爱心/文字阵都在里面按名字挑" if fun
                     else "；分享好文：玩法-阵型收录 链接 [备注]"))
+    return "\n".join(lines)
+
+
+def _fmt_strategy_info(s: dict) -> str:
+    """流派详情（无个人等级对比版，免绑定）。"""
+    lo, hi = s["th"]
+    lines = [f"🎯 {s['key']}（{'/'.join(s['aliases'])}）| 适用 {lo}-{hi}本 | 数据更新 {meta.META_UPDATED}",
+             f"思路：{s['desc']}",
+             f"英雄/装备：{s['heroes']}",
+             "关键兵种：" + "、".join(TROOP_CN.get(n, n) for n in s["troops"]),
+             "关键法术：" + "、".join(SPELL_CN.get(n, n) for n in s["spells"])]
+    if s.get("army"):
+        lines.append(f"📎 一键复制配兵：{s['army']}")
+    else:
+        lines.append("配兵：常青流派，进游戏军队页或 blueprintcoc.com 搜同名")
+    lines.append("对照自己的等级缺口：我-" + s["key"] + "（需先绑定玩家）")
     return "\n".join(lines)
 
 
