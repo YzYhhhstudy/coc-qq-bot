@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- macOS 开机自启（launchd，相当于 Linux 的 systemd）
+     用法：
+       1. 把下面三处 /Users/YOU/coc-qq-bot 改成实际路径
+       2. cp deploy/com.coc-qq-bot.plist ~/Library/LaunchAgents/
+       3. launchctl load ~/Library/LaunchAgents/com.coc-qq-bot.plist
+     停止：launchctl unload ~/Library/LaunchAgents/com.coc-qq-bot.plist
+     KeepAlive=true 自带崩溃重启，不需要再跑 run_unix.sh -->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.coc-qq-bot</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOU/coc-qq-bot/.venv/bin/python</string>
+        <string>-m</string>
+        <string>app.ws_main</string>
+    </array>
+    <key>WorkingDirectory</key><string>/Users/YOU/coc-qq-bot</string>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>/Users/YOU/coc-qq-bot/bot.log</string>
+    <key>StandardErrorPath</key><string>/Users/YOU/coc-qq-bot/bot.log</string>
+</dict>
+</plist>

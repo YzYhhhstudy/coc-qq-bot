@@ -195,6 +195,20 @@ scripts\run_windows.bat
 **日常更新——通常不用管**：机器人每天自动检查一次 GitHub，有新版本会**自动更新并重启**（`.env` 里 `AUTO_UPDATE=0` 可关闭）。
 发「版本」可随时查询当前版本和更新状态。想立即更新（不等下一轮检查）就双击 `scripts\update.bat`——拉代码 → 装依赖 → 重启一条龙，只精准杀 bot 进程，不影响其他 Python 程序。
 
+### macOS
+
+```bash
+git clone https://github.com/YzYhhhstudy/coc-qq-bot.git && cd coc-qq-bot
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# 建好 .env 后，前台跑（带崩溃自动重启）：
+./scripts/run_unix.sh
+# 更新：./scripts/update.sh
+```
+
+开机自启用 launchd：改好 `deploy/com.coc-qq-bot.plist` 里的路径，
+`cp` 到 `~/Library/LaunchAgents/` 再 `launchctl load`（自带崩溃重启，详见 plist 内注释）。
+⚠️ MacBook 合盖会休眠断线：系统设置 → 电池 → 关闭"接通电源时自动休眠"，或跑 `caffeinate -s` 保持唤醒；笔记本注定要带出门的话，建议部署到家里常开的机器。
+
 ### Linux / VPS
 
 ```bash
@@ -203,6 +217,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # 拷入 .env 和 bindings.db 后：
 sudo cp deploy/coc-qq-bot.service /etc/systemd/system/   # 先改里面的路径
 sudo systemctl enable --now coc-qq-bot
+# 更新：./scripts/update.sh
 ```
 
 ## 参考文档
