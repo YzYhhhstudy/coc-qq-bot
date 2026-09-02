@@ -66,11 +66,11 @@ try:
 except OSError:
     TH_CAPS = {"max_th": 0}
 
-# 各大本英雄满级总和（侦查/阵容用）：表覆盖到的本按表算，更高的本用人工值（版本更新后校对）
-TH_HERO_MAX = {7: 10, 8: 30, 9: 70, 10: 100, 11: 150, 12: 210, 13: 275,
-               14: 320, 15: 355, 16: 385, 17: 415, 18: 440}
-TH_HERO_MAX.update({th: s for th in range(7, TH_CAPS.get("max_th", 0) + 1)
-                    if (s := sum(v.get(str(th), 0) for v in TH_CAPS.get("heroes", {}).values()))})
+# 静态数据还没收录的新单位，人工补充（来源：社区 wiki）；重跑生成脚本后若已收录则以生成的为准
+TH_CAPS_MANUAL = {"heroes": {"Dragon Duke": {"15": 10, "16": 15, "17": 20, "18": 25}}}
+for _kind, _units in TH_CAPS_MANUAL.items():
+    for _name, _caps in _units.items():
+        TH_CAPS.setdefault(_kind, {}).setdefault(_name, _caps)
 
 # 32000056=China（实测核对 /locations；32000059 是哥伦比亚，勿混）
 LOCATION_IDS = {"全球": "global", "国服": "32000056", "中国": "32000056"}
@@ -82,7 +82,7 @@ HELP = (
     "【部落】绑定 #TAG｜解绑｜部落 [#TAG]｜成员 [#TAG]｜捐兵｜摸鱼榜｜周报｜"
     "突袭｜突袭-催刀｜突袭-历史｜都城｜搜索 名字\n"
     "【部落战】部落战(=战况)｜部落战-对阵｜部落战-进度｜部落战-分配｜部落战-催刀｜部落战-敌刀｜"
-    "部落战-复盘｜部落战-战绩｜部落战-侦查(敌方英雄摸底)\n"
+    "部落战-复盘｜部落战-战绩｜部落战-侦查(对手进度摸底)\n"
     "【联赛】联赛｜联赛-积分榜｜联赛-奖章｜联赛-对阵｜联赛-2(第2场)｜联赛-进度 [场次]｜联赛-分配(作战计划)｜"
     "联赛-催刀｜联赛-敌刀｜联赛-复盘 [场次]｜联赛-总结｜联赛-侦查 [场次]｜联赛-阵容 [15|30]\n"
     "【日程】日程 — 赛季结束/联赛/突袭周末倒计时\n"
@@ -956,7 +956,7 @@ def _progress_of(p: dict) -> dict[str, tuple[int, int, list]]:
             return
         cur, tot, gaps = cats.get(cat, (0, 0, []))
         if lv < mx:
-            gaps.append((mx - lv, cn))
+            gaps.append((mx - lv, cn, lv, mx))
         cats[cat] = (cur + lv, tot + mx, gaps)
 
     for h in p.get("heroes", []):
@@ -983,6 +983,16 @@ def _progress_of(p: dict) -> dict[str, tuple[int, int, list]]:
     return cats
 
 
+def _progress_summary(p: dict) -> tuple[float | None, float | None]:
+    """(进攻总进度, 英雄进度)，0~1；英雄+实验室，不含装备。没数据为 None。"""
+    cats = _progress_of(p)
+    main = [(c, t) for k, (c, t, _g) in cats.items() if k != "装备"]
+    tot = sum(t for _c, t in main)
+    total = sum(c for c, _t in main) / tot if tot else None
+    hero = cats["英雄"][0] / cats["英雄"][1] if cats.get("英雄") and cats["英雄"][1] else None
+    return total, hero
+
+
 def _fmt_progress(p: dict) -> str:
     """进攻侧进度：英雄+实验室按当前大本满级折算百分比（防御建筑 API 不提供）。"""
     th = p.get("townHallLevel", 0)
@@ -1005,7 +1015,7 @@ def _fmt_progress(p: dict) -> str:
         lines.append(f"英雄装备 {c / t:.0%} ({c}/{t})（不计入总进度）")
     gaps = sorted((g for k in main_keys for g in cats[k][2]), key=lambda g: -g[0])[:5]
     if gaps:
-        lines.append("差得最多：" + "、".join(f"{n}差{d}级" for d, n in gaps))
+        lines.append("差得最多：" + "、".join(f"{n} {lv}/{mx} (差{d}级)" for d, n, lv, mx in gaps))
     lines.append("注：满级按各大本上限（最高本即全游戏最高）；未解锁的不计；防御建筑等级官方 API 不提供")
     return "\n".join(lines)
 
@@ -1241,7 +1251,7 @@ def _fmt_raid_idle(res: dict) -> str:
 # ---------------- 敌情侦查 / 阵容建议 ----------------
 
 async def _fmt_scout(war: dict, round_label: str = "") -> str:
-    """对面全员英雄摸底：批量拉档案，标出软柿子。"""
+    """对面全员摸底：批量拉档案，按各自大本上限算进攻进度，标出软柿子。"""
     them = war["opponent"]
     theirs = sorted(them.get("members", []), key=lambda m: m.get("mapPosition", 99))
     if not theirs:
@@ -1250,41 +1260,37 @@ async def _fmt_scout(war: dict, round_label: str = "") -> str:
     profiles = await coc.get_players([m["tag"] for m in theirs], ttl=600)
     our_profiles = await coc.get_players([m["tag"] for m in ours], ttl=600)
 
-    rows = []  # (序号, 名字, 本, 英雄总级|None, 满级占比|None)
+    rows = []  # (序号, 名字, 本, 进攻进度|None, 英雄进度|None)
     for i, m in enumerate(theirs, 1):
-        th = m.get("townhallLevel", 0)
         p = profiles.get(m["tag"])
-        hs = _hero_sum(p) if p else None
-        mx = TH_HERO_MAX.get(th)
-        pct = hs / mx if (hs is not None and mx) else None
-        rows.append((i, m["name"], th, hs, pct))
+        prog, hero = _progress_summary(p) if p else (None, None)
+        rows.append((i, m["name"], m.get("townhallLevel", 0), prog, hero))
 
     lines = [f"🔭 敌情侦查 vs {them['name']}" + (f" | {round_label}" if round_label else "")]
-    for i, name, th, hs, pct in rows:
-        if hs is None:
-            lines.append(f"{i}. {name} {th}本 英雄?")
-        elif pct is None:
-            lines.append(f"{i}. {name} {th}本 英雄{hs}")
-        else:
-            mark = "⚠️" if pct < 0.7 else ""
-            lines.append(f"{i}. {name} {th}本 英雄{hs}/{TH_HERO_MAX[th]}({pct:.0%}){mark}")
+    for i, name, th, prog, hero in rows:
+        if prog is None:
+            lines.append(f"{i}. {name} {th}本 档案?")
+            continue
+        mark = "⚠️" if prog < 0.7 else ""
+        hero_s = f" 英雄{hero:.0%}" if hero is not None else ""
+        lines.append(f"{i}. {name} {th}本 进度{prog:.0%}{hero_s}{mark}")
 
-    soft = sorted((r for r in rows if r[3] is not None),
-                  key=lambda r: (r[2], r[3]))[:4]
+    soft = sorted((r for r in rows if r[3] is not None), key=lambda r: (r[2], r[3]))[:4]
     if soft:
-        lines.append("—— 软柿子（本低/英雄低）——")
-        lines += _chunk([f"{i}号{name}" for i, name, _th, _hs, _p in soft], 4)
+        lines.append("—— 软柿子（本低/进度低）——")
+        lines += _chunk([f"{i}号{name}" for i, name, _th, _p, _h in soft], 4)
 
     def _avgs(members, profs):
         ths = [m.get("townhallLevel", 0) for m in members]
-        sums = [_hero_sum(p) for p in (profs.get(m["tag"]) for m in members) if p]
-        return (sum(ths) / len(ths) if ths else 0,
-                sum(sums) / len(sums) if sums else 0)
+        progs = [pr for pr in (_progress_summary(p)[0]
+                               for p in (profs.get(m["tag"]) for m in members) if p)
+                 if pr is not None]
+        return (sum(ths) / len(ths) if ths else 0, sum(progs) / len(progs) if progs else 0)
 
-    th_us, hs_us = _avgs(ours, our_profiles)
-    th_th, hs_th = _avgs(theirs, profiles)
-    lines.append(f"💡 对比：我方均{th_us:.1f}本/英雄{hs_us:.0f}"
-                 f" vs 敌方均{th_th:.1f}本/英雄{hs_th:.0f}")
+    th_us, pg_us = _avgs(ours, our_profiles)
+    th_th, pg_th = _avgs(theirs, profiles)
+    lines.append(f"💡 对比：我方均{th_us:.1f}本/进度{pg_us:.0%} vs 敌方均{th_th:.1f}本/进度{pg_th:.0%}")
+    lines.append("进度=英雄+实验室按各自大本上限折算；查单人：玩家-进度 #TAG")
     return "\n".join(lines)
 
 
