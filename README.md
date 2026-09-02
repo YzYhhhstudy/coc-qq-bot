@@ -141,6 +141,8 @@ WebSocket 出站连接**不需要**公网 IP、域名、备案、证书。总成
 .venv/bin/python scripts/local_smoke.py   # 不碰 QQ 群，测指令逻辑 + 验签
 ```
 
+不需要 token 的离线测试方法、快照回填、开发与发布流程见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+
 ## ❓ 常见问题
 
 **Q：机器人不回消息？** 按顺序排查：① `.env` 是否在项目根目录且三个值都填了；② 你的 QQ 是否已加进沙箱"消息列表配置"；③ 看日志（`bot.log` 或终端输出）——出现`「xxx」启动成功`说明连接正常；④ Windows 首次运行放行防火墙弹窗。
@@ -240,4 +242,5 @@ sudo systemctl enable --now coc-qq-bot
 
 - QQ 机器人官方文档（v2 API / Webhook）：https://bot.q.qq.com/wiki/develop/api-v2/
 - CoC API 文档：https://developer.clashofclans.com/#/documentation
-- coc.py（如果以后想换成熟封装）：https://github.com/mathsman5133/coc.py
+- coc.py（th_caps.json 的数据来源；如果以后想换成熟封装也是它）：https://github.com/mathsman5133/coc.py
+- 本项目开发指南与踩坑记录（API 能力边界 / 代码约定 / 测试方法 / 历次踩坑）：[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)

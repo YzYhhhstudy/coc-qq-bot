@@ -30,7 +30,7 @@ LEAGUE_CN = {"Bronze": "青铜", "Silver": "白银", "Gold": "黄金",
              "Crystal": "水晶", "Master": "大师", "Champion": "冠军"}
 
 HERO_CN = {"Barbarian King": "蛮王", "Archer Queen": "女皇", "Grand Warden": "大守护者",
-           "Royal Champion": "皇家战士", "Minion Prince": "亡灵王子",
+           "Royal Champion": "皇家战士", "Minion Prince": "亡灵王子", "Dragon Duke": "飞龙公爵",
            "Battle Machine": "战争机器", "Battle Copter": "战争直升机"}
 TROOP_CN = {
     "Barbarian": "野蛮人", "Archer": "弓箭手", "Giant": "巨人", "Goblin": "哥布林",
@@ -41,6 +41,7 @@ TROOP_CN = {
     "Minion": "亡灵", "Hog Rider": "野猪骑士", "Valkyrie": "瓦基丽武神", "Golem": "戈仑石人",
     "Witch": "女巫", "Lava Hound": "熔岩猎犬", "Bowler": "投石手", "Ice Golem": "寒冰戈仑",
     "Headhunter": "猎头者", "Apprentice Warden": "见习守护者", "Druid": "德鲁伊",
+    "Furnace": "烈焰熔炉",
 }
 SPELL_CN = {
     "Lightning Spell": "闪电", "Healing Spell": "治疗", "Rage Spell": "狂暴",
@@ -48,13 +49,16 @@ SPELL_CN = {
     "Invisibility Spell": "隐身", "Recall Spell": "召回", "Revive Spell": "复活",
     "Poison Spell": "毒药", "Earthquake Spell": "地震", "Haste Spell": "加速",
     "Skeleton Spell": "骷髅", "Bat Spell": "蝙蝠", "Overgrowth Spell": "藤蔓",
+    "Ice Block Spell": "冰障", "Totem Spell": "图腾",
 }
 PET_CN = {"L.A.S.S.I": "拉西", "Electro Owl": "电鸮", "Mighty Yak": "猛牦牛",
           "Unicorn": "独角兽", "Frosty": "小雪怪", "Diggy": "穿山甲",
           "Poison Lizard": "毒蜥蜴", "Phoenix": "凤凰", "Spirit Fox": "灵狐",
           "Angry Jelly": "怒灵水母", "Sneezy": "喷嚏怪"}
-SIEGE = {"Wall Wrecker", "Battle Blimp", "Stone Slammer", "Siege Barracks",
-         "Log Launcher", "Flame Flinger", "Battle Drill", "Troop Launcher"}
+SIEGE_CN = {"Wall Wrecker": "攻城战车", "Battle Blimp": "攻城飞艇", "Stone Slammer": "攻城气球",
+            "Siege Barracks": "攻城训练营", "Log Launcher": "攻城滚木车",
+            "Flame Flinger": "攻城烈焰车", "Battle Drill": "攻城钻机", "Troop Launcher": "部队发射器"}
+SIEGE = set(SIEGE_CN)
 SUPER_TROOPS = {"Sneaky Goblin", "Rocket Balloon", "Inferno Dragon", "Ice Hound"}
 ROLE_CN = {"leader": "首领", "coLeader": "副首领", "admin": "长老", "member": "成员"}
 
@@ -395,6 +399,14 @@ def _time_left(war: dict) -> str:
 
 def _chunk(items: list[str], n: int = 4) -> list[str]:
     return ["  ".join(items[i:i + n]) for i in range(0, len(items), n)]
+
+
+def _unit_cn(name: str) -> str:
+    """任意单位的中文名：兵种→攻城→宠物→法术，都没有就原样返回英文（新单位记得补表）。"""
+    for table in (TROOP_CN, SIEGE_CN, PET_CN, SPELL_CN):
+        if name in table:
+            return table[name]
+    return name
 
 
 def _hero_sum(p: dict) -> int:
@@ -903,7 +915,7 @@ def _fmt_troops(p: dict) -> str:
         name = t["name"]
         if name.startswith("Super ") or name in SUPER_TROOPS:
             continue  # 超级兵等级跟随原兵种，不重复列
-        entry = f"{TROOP_CN.get(name, PET_CN.get(name, name))}{t['level']}/{t.get('maxLevel', '?')}"
+        entry = f"{_unit_cn(name)}{t['level']}/{t.get('maxLevel', '?')}"
         if name in SIEGE:
             sieges.append(entry)
         elif name in PET_CN:
@@ -969,11 +981,11 @@ def _progress_of(p: dict) -> dict[str, tuple[int, int, list]]:
         if name.startswith("Super ") or name in SUPER_TROOPS:
             continue  # 超级兵等级跟随原兵种
         if name in SIEGE:
-            add("攻城", "troops", TROOP_CN.get(name, name), t)
+            add("攻城", "troops", _unit_cn(name), t)
         elif name in PET_CN:
             add("宠物", "pets", PET_CN[name], t)
         else:
-            add("兵种", "troops", TROOP_CN.get(name, name), t)
+            add("兵种", "troops", _unit_cn(name), t)
     for s in p.get("spells", []):
         if s.get("village") == "home":
             add("法术", "spells", SPELL_CN.get(s["name"], s["name"]), s)
@@ -1502,7 +1514,7 @@ def _fmt_advice(p: dict) -> str:
     if gap_troops:
         lines.append("2️⃣ 主流进攻兵种缺口（挑你在用的流派升）：")
         lines.append("  " + "、".join(
-            f"{TROOP_CN.get(n, n)}{t['level']}/{t['maxLevel']}" for n, t in gap_troops[:6]))
+            f"{_unit_cn(n)}{t['level']}/{t['maxLevel']}" for n, t in gap_troops[:6]))
 
     spells = {s["name"]: s for s in p.get("spells", []) if s.get("village") == "home"}
     gap_spells = [(n, spells[n]) for n in ADVICE_SPELLS
@@ -1599,7 +1611,7 @@ def _fmt_strategy_info(s: dict) -> str:
     lines = [f"🎯 {s['key']}（{'/'.join(s['aliases'])}）| 适用 {lo}-{hi}本 | 数据更新 {meta.META_UPDATED}",
              f"思路：{s['desc']}",
              f"英雄/装备：{s['heroes']}",
-             "关键兵种：" + "、".join(TROOP_CN.get(n, n) for n in s["troops"]),
+             "关键兵种：" + "、".join(_unit_cn(n) for n in s["troops"]),
              "关键法术：" + "、".join(SPELL_CN.get(n, n) for n in s["spells"])]
     if s.get("army"):
         lines.append(f"📎 一键复制配兵：{s['army']}")
@@ -1626,12 +1638,12 @@ def _fmt_strategy_advice(p: dict, s: dict) -> str:
         for n in names:
             u = pool.get(n)
             if not u:
-                out.append(f"{TROOP_CN.get(n, SPELL_CN.get(n, n))} 未解锁❗")
+                out.append(f"{_unit_cn(n)} 未解锁❗")
             elif u["level"] < u.get("maxLevel", 0):
-                out.append(f"{TROOP_CN.get(n, SPELL_CN.get(n, n))}"
+                out.append(f"{_unit_cn(n)}"
                            f"{u['level']}/{u['maxLevel']}⚠️")
             else:
-                out.append(f"{TROOP_CN.get(n, SPELL_CN.get(n, n))}{u['level']}✅")
+                out.append(f"{_unit_cn(n)}{u['level']}✅")
         return out
 
     lines.append("关键兵种：" + "、".join(check(s["troops"], troops)) +
