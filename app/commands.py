@@ -4,7 +4,9 @@
 旧的扁平指令（对阵/积分榜/奖章）保留为别名。
 """
 import asyncio
+import json
 import math
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -56,9 +58,19 @@ SIEGE = {"Wall Wrecker", "Battle Blimp", "Stone Slammer", "Siege Barracks",
 SUPER_TROOPS = {"Sneaky Goblin", "Rocket Balloon", "Inferno Dragon", "Ice Hound"}
 ROLE_CN = {"leader": "首领", "coLeader": "副首领", "admin": "长老", "member": "成员"}
 
-# 各大本英雄满级总和（蛮王+女皇+亡灵王子+大守护+皇战），随版本更新人工校对 wiki
+# 各大本单位等级上限，由 scripts/gen_th_caps.py 从游戏静态数据生成
+# （官方 API 的 maxLevel 是全游戏最高等级、不分大本，所以进度/侦查都需要这张表）
+try:
+    with open(os.path.join(os.path.dirname(__file__), "th_caps.json"), encoding="utf-8") as _f:
+        TH_CAPS = json.load(_f)
+except OSError:
+    TH_CAPS = {"max_th": 0}
+
+# 各大本英雄满级总和（侦查/阵容用）：表覆盖到的本按表算，更高的本用人工值（版本更新后校对）
 TH_HERO_MAX = {7: 10, 8: 30, 9: 70, 10: 100, 11: 150, 12: 210, 13: 275,
                14: 320, 15: 355, 16: 385, 17: 415, 18: 440}
+TH_HERO_MAX.update({th: s for th in range(7, TH_CAPS.get("max_th", 0) + 1)
+                    if (s := sum(v.get(str(th), 0) for v in TH_CAPS.get("heroes", {}).values()))})
 
 # 32000056=China（实测核对 /locations；32000059 是哥伦比亚，勿混）
 LOCATION_IDS = {"全球": "global", "国服": "32000056", "中国": "32000056"}
@@ -77,8 +89,8 @@ HELP = (
     "【排行】排行-部落 [国服|全球]｜排行-玩家 [国服|全球]｜排行-传奇\n"
     "【玩法】玩法-流派-17(大本数)｜玩法-阵型-17｜玩法-个性阵-17｜"
     "玩法-阵型收录/流派收录 链接 [备注]｜玩法-收录列表\n"
-    "【玩家】玩家 #TAG｜玩家-英雄/部队/法术/建议 #TAG｜传奇 #TAG\n"
-    "【我】绑定玩家 #TAG｜解绑玩家｜我｜我-英雄/部队/法术/建议/成长/传奇｜我-流派名(如 我-隐龙龙骑)\n"
+    "【玩家】玩家 #TAG｜玩家-英雄/部队/法术/建议/进度 #TAG｜传奇 #TAG\n"
+    "【我】绑定玩家 #TAG｜解绑玩家｜我｜我-英雄/部队/法术/建议/进度/成长/传奇｜我-流派名(如 我-隐龙龙骑)\n"
     "带 [#TAG] 的指令可以查任意部落，不带就查已绑定的\n"
     "换绑：直接重新「绑定」即可覆盖"
 )
@@ -143,7 +155,7 @@ async def handle(group_openid: str, content: str) -> str:
         # ---- 玩家 ----
         if main == "玩家":
             if not args:
-                return "用法：玩家 #玩家TAG（子功能：玩家-英雄/部队/法术/建议/流派名 #TAG）"
+                return "用法：玩家 #玩家TAG（子功能：玩家-英雄/部队/法术/建议/进度/流派名 #TAG）"
             return _fmt_player_sub(await coc.get_player(args[0]), sub)
         if main == "我":
             ptag = store.get_player_tag(group_openid)
@@ -835,6 +847,8 @@ def _fmt_player_sub(p: dict, sub: str) -> str:
         return _fmt_spells(p)
     if sub == "建议":
         return _fmt_advice(p)
+    if sub == "进度":
+        return _fmt_progress(p)
     if sub:  # 试着当流派名解析：我-隐龙龙骑
         strat = meta.find_strategy(sub)
         if strat:
@@ -861,7 +875,7 @@ def _fmt_player(p: dict) -> str:
     if hero_line:
         lines.append(f"英雄：{hero_line}")
     lines.append(f"部落：{clan.get('name', '无')}" + (f"（{role}）" if role else ""))
-    lines.append("更多：玩家-英雄 / 玩家-部队 / 玩家-法术")
+    lines.append("更多：玩家-英雄 / 玩家-部队 / 玩家-法术 / 玩家-进度")
     return "\n".join(lines)
 
 
@@ -913,6 +927,87 @@ def _fmt_spells(p: dict) -> str:
     if not spells:
         return f"{p['name']} 还没解锁法术"
     return "\n".join([f"🧪 {p['name']} 的法术（等级/满级）"] + _chunk(spells))
+
+
+def _unit_cap(kind: str, name: str, th: int, api_max: int) -> int:
+    """单位在某大本的等级上限。
+
+    最高本的上限就是全游戏最高，直接用 API 的 maxLevel（比静态表更及时）；
+    表里没有的新单位也退回 API 值。
+    """
+    caps = TH_CAPS.get(kind, {}).get(name)
+    if not caps or th >= TH_CAPS.get("max_th", 0):
+        return api_max
+    for t in range(th, 0, -1):  # 该本没记录就取更低本的上限
+        if str(t) in caps:
+            return min(caps[str(t)], api_max) if api_max else caps[str(t)]
+    return api_max
+
+
+def _progress_of(p: dict) -> dict[str, tuple[int, int, list]]:
+    """按类别汇总 等级/该本满级。返回 {类别: (当前等级和, 满级和, [(差几级, 中文名), ...])}"""
+    th = p.get("townHallLevel", 0)
+    cats: dict[str, tuple[int, int, list]] = {}
+
+    def add(cat: str, kind: str, cn: str, unit: dict) -> None:
+        lv = unit.get("level", 0)
+        mx = max(lv, _unit_cap(kind, unit.get("name", ""), th, unit.get("maxLevel", 0)))
+        if not mx:
+            return
+        cur, tot, gaps = cats.get(cat, (0, 0, []))
+        if lv < mx:
+            gaps.append((mx - lv, cn))
+        cats[cat] = (cur + lv, tot + mx, gaps)
+
+    for h in p.get("heroes", []):
+        if h.get("village") == "home":
+            add("英雄", "heroes", HERO_CN.get(h["name"], h["name"]), h)
+    for t in p.get("troops", []):
+        if t.get("village") != "home":
+            continue
+        name = t["name"]
+        if name.startswith("Super ") or name in SUPER_TROOPS:
+            continue  # 超级兵等级跟随原兵种
+        if name in SIEGE:
+            add("攻城", "troops", TROOP_CN.get(name, name), t)
+        elif name in PET_CN:
+            add("宠物", "pets", PET_CN[name], t)
+        else:
+            add("兵种", "troops", TROOP_CN.get(name, name), t)
+    for s in p.get("spells", []):
+        if s.get("village") == "home":
+            add("法术", "spells", SPELL_CN.get(s["name"], s["name"]), s)
+    for e in p.get("heroEquipment", []):
+        if e.get("village", "home") == "home":
+            add("装备", "equipment", e.get("name", "?"), e)
+    return cats
+
+
+def _fmt_progress(p: dict) -> str:
+    """进攻侧进度：英雄+实验室按当前大本满级折算百分比（防御建筑 API 不提供）。"""
+    th = p.get("townHallLevel", 0)
+    cats = _progress_of(p)
+    main_keys = [k for k in ("英雄", "兵种", "攻城", "宠物", "法术") if k in cats]
+    if not main_keys:
+        return f"{p['name']} 还没有可统计的英雄/兵种数据"
+    cur = sum(cats[k][0] for k in main_keys)
+    tot = sum(cats[k][1] for k in main_keys)
+    pct = cur / tot if tot else 0
+    head = f"📊 {p['name']} {th}本 进攻进度 {int(pct * 100)}%"  # 向下取整：只有真全满才显示 100%
+    if pct >= 1:
+        head += " 🎉 英雄+实验室全满"
+    lines = [head]
+    parts = [f"{k} {cats[k][0] / cats[k][1]:.0%} ({cats[k][0]}/{cats[k][1]})"
+             for k in main_keys]
+    lines += [" | ".join(parts[i:i + 3]) for i in range(0, len(parts), 3)]
+    if "装备" in cats:
+        c, t, _g = cats["装备"]
+        lines.append(f"英雄装备 {c / t:.0%} ({c}/{t})（不计入总进度）")
+    gaps = sorted((g for k in main_keys for g in cats[k][2]), key=lambda g: -g[0])[:5]
+    if gaps:
+        lines.append("差得最多：" + "、".join(f"{n}差{d}级" for d, n in gaps))
+    lines.append("注：满级按各大本上限（最高本即全游戏最高）；未解锁的不计；防御建筑等级官方 API 不提供")
+    return "\n".join(lines)
 
 
 # ---------------- 胜率预估 / 复盘 / 总结 / 成长 ----------------
